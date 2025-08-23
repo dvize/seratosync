@@ -100,7 +100,7 @@ def _serato_pfil_to_local_path(pfil_value: str, music_folder: str) -> str:
 
 # --- Track and Crate Creation ---
 
-def create_track_chunk_payload(file_path):
+def create_track_chunk_payload(file_path, normalized_serato_path=None):
     """Creates the inner payload for an 'otrk' chunk."""
     try:
         audio = mutagen.File(file_path, easy=False)
@@ -110,8 +110,11 @@ def create_track_chunk_payload(file_path):
         audio = None
         info = None
 
+    # Use normalized Serato path if provided, otherwise use the raw file path
+    path_for_pfil = normalized_serato_path if normalized_serato_path else file_path
+    
     # Mandatory file path
-    payload = _pack_subchunk('pfil', file_path.encode('utf-16-be'))
+    payload = _pack_subchunk('pfil', path_for_pfil.encode('utf-16-be'))
 
     if audio and audio.tags:
         # Standard metadata
@@ -310,7 +313,11 @@ def main():
                 if (i + 1) % 100 == 0:
                     print(f"  ...processed {i+1}/{len(new_track_paths)} new tracks...")
                 
-                otrk_payload = create_track_chunk_payload(path)
+                # Import normalize_path_for_crate function
+                from crate_manager import normalize_path_for_crate
+                # Normalize the path to Serato format before creating the track chunk
+                normalized_path = normalize_path_for_crate(path, music_folder)
+                otrk_payload = create_track_chunk_payload(path, normalized_path)
                 otrk_header = b'otrk' + struct.pack('>I', len(otrk_payload))
                 main_library_payload += otrk_header + otrk_payload
                 # The otrk chunk itself does not get padded here, its subchunks are already padded.

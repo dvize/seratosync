@@ -11,6 +11,24 @@ from io import BytesIO
 
 logger = logging.getLogger('crate_manager')
 
+def normalize_path_for_crate(path, music_folder):
+    """Convert absolute path to Serato-compatible path format matching database"""
+    try:
+        # Try to make the path relative to the music folder
+        rel_path = os.path.relpath(path, music_folder)
+        if not rel_path.startswith('..'):  # Make sure it's actually inside the music folder
+            # Convert Windows backslashes to forward slashes for Serato compatibility
+            rel_path = rel_path.replace(os.path.sep, '/')
+            # Serato database paths start with "Music/Music Tracks/"
+            return f"Music/Music Tracks/{rel_path}"
+    except ValueError:
+        # Different drives on Windows, can't make relative
+        pass
+    
+    # If relative path fails, use absolute path and convert separators
+    abs_path = os.path.abspath(path).replace(os.path.sep, '/')
+    return abs_path
+
 def read_existing_crates(subcrates_path):
     """
     Read all existing .crate files and return their track memberships.
@@ -114,24 +132,6 @@ def update_crates_intelligently(local_music_map, subcrates_path, music_folder):
     """
     logger.info("Reading existing crates...")
     existing_crates = read_existing_crates(subcrates_path)
-    
-    # Normalize paths for comparison
-    def normalize_path_for_crate(path, music_folder):
-        """Convert absolute path to Serato-compatible relative path format"""
-        try:
-            # Try to make the path relative to the music folder
-            rel_path = os.path.relpath(path, music_folder)
-            if not rel_path.startswith('..'):  # Make sure it's actually inside the music folder
-                # Convert Windows backslashes to forward slashes for Serato compatibility
-                return rel_path.replace(os.path.sep, '/')
-        except ValueError:
-            # Different drives on Windows, can't make relative
-            pass
-        
-        # Fallback: if we can't make it relative, use the full path
-        # but normalize it and convert to forward slashes for Serato
-        norm_path = os.path.normpath(path)
-        return norm_path.replace(os.path.sep, '/')
     
     updated_count = 0
     preserved_count = 0

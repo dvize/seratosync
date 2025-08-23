@@ -18,6 +18,8 @@ def find_otrk_chunks(data):
     """
     Find all 'otrk' chunk positions in the binary data.
     Returns list of (position, length) tuples where otrk chunks start.
+    
+    Reverted to simpler approach while we investigate the database structure.
     """
     otrk_chunks = []
     otrk_pattern = b'otrk'
@@ -33,10 +35,19 @@ def find_otrk_chunks(data):
             try:
                 length_pos = pos - 4
                 chunk_length = struct.unpack('>I', data[length_pos:pos])[0]
-                # Sanity check: length should be reasonable (not too big or negative)
-                if 0 < chunk_length < 100000:  # Max 100KB per chunk seems reasonable
-                    otrk_chunks.append((length_pos, chunk_length))
-            except:
+                # Sanity check: length should be reasonable
+                if 0 < chunk_length < len(data):  # Length should not exceed data size
+                    
+                    # Validate this looks like a track chunk
+                    chunk_start = pos + 4
+                    chunk_end = min(chunk_start + chunk_length, len(data))
+                    chunk_payload = data[chunk_start:chunk_end]
+                    
+                    # Look for file path field which all tracks should have
+                    if b'pfil' in chunk_payload:
+                        otrk_chunks.append((length_pos, chunk_length))
+                        
+            except (struct.error, IndexError):
                 pass
         
         pos += 4
@@ -155,10 +166,26 @@ def extract_track_from_otrk(data, otrk_pos, chunk_length):
     
     try:
         # Store the raw chunk data (needed for sync system)
+        # The otrk_pos points to the length field, so we extract:
+        # 4 bytes (length) + 4 bytes (otrk tag) + chunk_length bytes (payload)
         chunk_end = otrk_pos + 8 + chunk_length
         if chunk_end <= len(data):
-            track_info['__raw_chunk'] = data[otrk_pos:chunk_end]
-            track_info['__parse_pos'] = otrk_pos
+            raw_chunk_data = data[otrk_pos:chunk_end]
+            
+            # Verify this is a proper otrk chunk by checking the structure
+            if len(raw_chunk_data) >= 8 and raw_chunk_data[4:8] == b'otrk':
+                # Double-check the length field matches what we expect
+                stored_length = struct.unpack('>I', raw_chunk_data[0:4])[0]
+                if stored_length == chunk_length:
+                    track_info['__raw_chunk'] = raw_chunk_data
+                    track_info['__parse_pos'] = otrk_pos
+                else:
+                    # Length mismatch - chunk might be corrupted, exclude raw data
+                    track_info['__parse_pos'] = otrk_pos
+            else:
+                # If structure is invalid, don't include raw chunk
+                # (this will prevent corruption in database writing)
+                track_info['__parse_pos'] = otrk_pos
         
         # Skip the otrk length and tag (8 bytes total)
         pos = otrk_pos + 8

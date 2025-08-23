@@ -1,22 +1,49 @@
 #!/usr/bin/env python3
-import serato_parser_fixed as parser
 
-print("Testing the improved parser...")
-result = parser.parse_serato_database(r'E:\_Serato_\database V2')
-tracks = result['tracks']
+"""
+Simple test to check what the serato parser actually returns.
+"""
 
-print(f"Total tracks found: {len(tracks)}")
+import sys
+sys.path.append('.')
 
-# Show first few tracks
-print("\nFirst 5 tracks:")
-for i, track in enumerate(tracks[:5]):
-    artist = track.get('tart', 'N/A')
-    title = track.get('tsng', 'N/A') 
-    filepath = track.get('pfil', 'N/A')
-    print(f"{i+1}. Artist: '{artist}' - Title: '{title}'")
-    if len(filepath) > 80:
-        print(f"   File: {filepath[:40]}...{filepath[-40:]}")
+from serato_parser_fixed import parse_serato_database
+
+def test_parser():
+    """Test what the parser returns."""
+    print("Testing Serato database parser...")
+    
+    db_path = "E:/_Serato_/database V2"
+    result = parse_serato_database(db_path)
+    
+    print(f"Parser returned: {type(result)}")
+    
+    if isinstance(result, dict):
+        print(f"Keys in result: {list(result.keys())}")
+        if 'tracks' in result:
+            tracks = result['tracks']
+            print(f"Number of tracks: {len(tracks)}")
+            
+            if tracks:
+                sample_track = tracks[0]
+                print(f"\nSample track keys: {list(sample_track.keys())}")
+                
+                # Check for raw chunk
+                if '__raw_chunk' in sample_track:
+                    raw_chunk = sample_track['__raw_chunk']
+                    print(f"Raw chunk exists: {len(raw_chunk)} bytes")
+                    print(f"First 20 bytes: {raw_chunk[:20]}")
+                else:
+                    print("No raw chunk found in sample track!")
+                
+                # Check for file path
+                if 'pfil' in sample_track:
+                    print(f"File path: {sample_track['pfil']}")
+                    
+                # Show all fields to debug what's missing
+                print(f"All track fields: {sample_track}")
     else:
-        print(f"   File: {filepath}")
+        print(f"Unexpected result type: {result}")
 
-print(f"\nTotal valid tracks recovered: {len(tracks)}")
+if __name__ == "__main__":
+    test_parser()
