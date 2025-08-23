@@ -1,12 +1,14 @@
 import os
 import pprint
 
-def scan_music_folder(root_path):
+def scan_music_folder(root_path, max_depth=0, min_tracks=1):
     """
     Scans a music folder and returns a dictionary mapping subfolders to music files.
 
     Args:
         root_path (str): The absolute path to the music folder.
+        max_depth (int): Maximum folder depth for crate creation (0 = no limit)
+        min_tracks (int): Minimum tracks required to create a crate
 
     Returns:
         dict: A dictionary where keys are relative folder paths (potential crates)
@@ -26,12 +28,19 @@ def scan_music_folder(root_path):
                 # We store the full path to the file
                 music_files.append(os.path.join(dirpath, filename))
 
-        if music_files:
+        if music_files and len(music_files) >= min_tracks:
             # The crate name will be the folder's path relative to the root
             crate_name = os.path.relpath(dirpath, root_path)
             if crate_name == '.':
                 # For files in the root of the music folder, use the folder's name
                 crate_name = os.path.basename(root_path)
+            
+            # Check depth limit
+            if max_depth > 0:
+                depth = len(crate_name.split(os.sep)) if crate_name != '.' else 1
+                if depth > max_depth:
+                    continue
+            
             music_map[crate_name] = music_files
 
     return music_map

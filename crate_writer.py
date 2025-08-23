@@ -43,20 +43,59 @@ def _norm_for_compare(path_str: str) -> str:
     p = _to_nfc(p)
     return os.path.normcase(p)
 
-def _serato_pfil_to_posix(pfil_value: str) -> str:
-    """Converts a Serato pfil path string to a standard POSIX path."""
+def _serato_pfil_to_local_path(pfil_value: str, music_folder: str) -> str:
+    """Converts a Serato pfil path string to a local file system path."""
     s = pfil_value.replace('\x00', '').strip()
-    if s.startswith('/'):
-        return s
+    
+    # Handle file:// URLs
     if s.lower().startswith('file://'):
         try:
-            return unquote(urlparse(s).path)
+            path = unquote(urlparse(s).path)
+            # On Windows, file:// URLs might have /C:/ format, fix this
+            if os.name == 'nt' and path.startswith('/') and len(path) > 3 and path[2] == ':':
+                path = path[1:]  # Remove leading slash for Windows drive letters
+            return path
         except Exception:
             pass
-    if ':' in s and '/' not in s:
+    
+    # Handle absolute paths
+    if s.startswith('/') or (os.name == 'nt' and len(s) > 1 and s[1] == ':'):
+        return s
+    
+    # Handle relative paths - most common case for cross-platform databases
+    # Serato often stores paths relative to a base music directory
+    if music_folder and not os.path.isabs(s):
+        # Try to map relative path to the current music folder
+        # Common patterns: "Music/Music Tracks/..." -> "{music_folder}/..."
+        
+        # If path starts with "Music/Music Tracks/" and our folder ends with "Music Tracks"
+        music_tracks_prefix = "Music/Music Tracks/"
+        if s.startswith(music_tracks_prefix):
+            relative_part = s[len(music_tracks_prefix):]
+            candidate_path = os.path.join(music_folder, relative_part)
+            return candidate_path
+        
+        # If path starts with "Music Tracks/"
+        music_tracks_prefix2 = "Music Tracks/"  
+        if s.startswith(music_tracks_prefix2):
+            relative_part = s[len(music_tracks_prefix2):]
+            candidate_path = os.path.join(music_folder, relative_part)
+            return candidate_path
+            
+        # Generic fallback - assume it's relative to music folder
+        candidate_path = os.path.join(music_folder, s)
+        return candidate_path
+    
+    # Handle old-style Mac paths with colons (rare now)
+    if ':' in s and '/' not in s and '\\' not in s:
         parts = s.split(':')
         if len(parts) >= 2:
-            return f"/Volumes/{parts[0]}/{'/'.join(parts[1:])}"
+            if os.name == 'nt':
+                # Convert to Windows path format - this is a guess
+                return f"/{parts[0]}/{'/'.join(parts[1:])}"
+            else:
+                return f"/Volumes/{parts[0]}/{'/'.join(parts[1:])}"
+    
     return s
 
 # --- Track and Crate Creation ---
@@ -167,8 +206,8 @@ def main():
             for track in db_tree['tracks']:
                 pfil_value = track.get('pfil')
                 if pfil_value and '__raw_chunk' in track:
-                    posix_path = _serato_pfil_to_posix(pfil_value)
-                    norm_path = _norm_for_compare(posix_path)
+                    local_path = _serato_pfil_to_local_path(pfil_value, music_folder)
+                    norm_path = _norm_for_compare(local_path)
                     serato_tracks_map[norm_path] = track['__raw_chunk']
     
     print(f"Found {len(local_tracks_paths)} tracks in local music folder.")
@@ -178,6 +217,47 @@ def main():
     valid_tracks_to_write = []
     serato_norm_paths = set(serato_tracks_map.keys())
     local_norm_paths = set(local_norm_map.keys())
+    
+    # Debug: Show path matching statistics
+    intersection = serato_norm_paths.intersection(local_norm_paths)
+    print(f"\nPATH MATCHING DEBUG:")
+    print(f"  Serato normalized paths: {len(serato_norm_paths)}")
+    print(f"  Local normalized paths: {len(local_norm_paths)}")
+    print(f"  Intersection (matches): {len(intersection)}")
+    print(f"  Serato-only paths: {len(serato_norm_paths - local_norm_paths)}")
+    print(f"  Local-only paths: {len(local_norm_paths - serato_norm_paths)}")
+    
+    # Debug: Show sample paths to understand normalization differences
+    print(f"\nSAMPLE PATH COMPARISON:")
+    serato_samples = list(serato_norm_paths)[:3]
+    local_samples = list(local_norm_paths)[:3]
+    print("Sample Serato normalized paths:")
+    for i, path in enumerate(serato_samples):
+        print(f"  {i+1}: {path}")
+    print("Sample Local normalized paths:")  
+    for i, path in enumerate(local_samples):
+        print(f"  {i+1}: {path}")
+        
+    # Check if any paths that should match are missing
+    serato_only_samples = list(serato_norm_paths - local_norm_paths)[:3]
+    local_only_samples = list(local_norm_paths - serato_norm_paths)[:3]
+    print("Sample Serato-only paths:")
+    for i, path in enumerate(serato_only_samples):
+        print(f"  {i+1}: {path}")
+    print("Sample Local-only paths:")
+    for i, path in enumerate(local_only_samples):
+        print(f"  {i+1}: {path}")
+        
+    # Debug: Check for potential near-matches (truncated extensions)
+    print(f"\nCHECKING FOR TRUNCATION ISSUES:")
+    truncation_matches = 0
+    for serato_path in list(serato_only_samples):
+        for local_path in list(local_only_samples):
+            if local_path.startswith(serato_path) and local_path.endswith('.mp3'):
+                print(f"  TRUNCATION: '{serato_path}' should be '{local_path}'")
+                truncation_matches += 1
+                break
+    print(f"  Found {truncation_matches} potential truncation matches in sample")
 
     if exclude_missing_files:
         # Only keep database tracks that have corresponding local files
@@ -260,7 +340,7 @@ def main():
         print(f"Created Subcrates directory: {serato_subcrates_path}")
     
     # Use intelligent crate updates - only update crates that need it
-    update_crates_intelligently(local_music_map, serato_subcrates_path)
+    update_crates_intelligently(local_music_map, serato_subcrates_path, music_folder)
     
     print("\nCrate generation complete.")
     print("SeratoSync finished successfully!")

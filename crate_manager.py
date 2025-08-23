@@ -107,7 +107,7 @@ def create_serato_crate_path(crate_name, base_path):
     # All crates go directly in the base Subcrates directory (flat structure)
     return os.path.join(base_path, f"{safe_name}.crate")
 
-def update_crates_intelligently(local_music_map, subcrates_path):
+def update_crates_intelligently(local_music_map, subcrates_path, music_folder):
     """
     Update crates intelligently - only create new crates for new folders or update changed ones.
     Preserves existing crate names and structure.
@@ -116,11 +116,22 @@ def update_crates_intelligently(local_music_map, subcrates_path):
     existing_crates = read_existing_crates(subcrates_path)
     
     # Normalize paths for comparison
-    def normalize_path_for_crate(path):
-        """Convert absolute path to relative for crate storage"""
-        if path.startswith('/Users/'):
-            return path[1:]  # Remove leading slash
-        return path
+    def normalize_path_for_crate(path, music_folder):
+        """Convert absolute path to Serato-compatible relative path format"""
+        try:
+            # Try to make the path relative to the music folder
+            rel_path = os.path.relpath(path, music_folder)
+            if not rel_path.startswith('..'):  # Make sure it's actually inside the music folder
+                # Convert Windows backslashes to forward slashes for Serato compatibility
+                return rel_path.replace(os.path.sep, '/')
+        except ValueError:
+            # Different drives on Windows, can't make relative
+            pass
+        
+        # Fallback: if we can't make it relative, use the full path
+        # but normalize it and convert to forward slashes for Serato
+        norm_path = os.path.normpath(path)
+        return norm_path.replace(os.path.sep, '/')
     
     updated_count = 0
     preserved_count = 0
@@ -135,7 +146,7 @@ def update_crates_intelligently(local_music_map, subcrates_path):
         crate_name = folder_path.replace(os.path.sep, ' / ')
         
         # Normalize track paths for crate storage
-        normalized_tracks = [normalize_path_for_crate(path) for path in track_paths]
+        normalized_tracks = [normalize_path_for_crate(path, music_folder) for path in track_paths]
         
         existing_tracks = existing_crates.get(crate_name)
         
