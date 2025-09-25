@@ -95,8 +95,8 @@ def validate_paths(args) -> bool:
     return True
 
 
-def write_crate_files(crate_plans: List[tuple[Path, List[str]]], dry_run: bool) -> int:
-    """Write crate files based on the given plans."""
+def write_crate_files(crate_plans: List[tuple[Path, List[str]]], dry_run: bool, affected_tracks: set = None) -> int:
+    """Write crate files based on the given plans, optionally limiting to crates with affected tracks."""
     if dry_run:
         print("[DRY RUN] No crate files written.")
         return 0
@@ -105,6 +105,12 @@ def write_crate_files(crate_plans: List[tuple[Path, List[str]]], dry_run: bool) 
     for crate_file, ptrks in crate_plans:
         if not ptrks:
             continue
+        
+        # If affected_tracks is provided, only update crates that contain affected tracks
+        if affected_tracks is not None:
+            has_affected_track = any(track in affected_tracks for track in ptrks)
+            if not has_affected_track:
+                continue  # Skip this crate - no affected tracks
         
         # Check if crate exists and count existing tracks
         existing_count = 0
@@ -132,7 +138,7 @@ def write_crate_files(crate_plans: List[tuple[Path, List[str]]], dry_run: bool) 
     return written
 
 
-def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[str], library_root: Path) -> bool:
+def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[str], library_root: Path) -> tuple[bool, set]:
     """
     Update Database V2 with new tracks using minimal required fields only.
     
@@ -147,16 +153,20 @@ def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[st
         library_root: The root path of the music library
         
     Returns:
-        True if successful, False otherwise
+        Tuple of (success: bool, affected_tracks: set) - affected_tracks contains 
+        all tracks that were added or had their paths updated
     """
     import time
     import struct
     from .tlv_utils import make_chunk
     from .database import read_database_v2_records, write_database_v2_records
 
+    # Track all affected tracks (new tracks + updated paths)
+    affected_tracks = set(new_tracks) if new_tracks else set()
+    
     if not new_tracks:
         print("[INFO] No new tracks to add, skipping database update.")
-        return True
+        return True, affected_tracks
     
     # Read existing records
     try:
@@ -164,7 +174,7 @@ def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[st
         print(f"[INFO] Read {len(records)} existing records from Database V2")
     except Exception as e:
         print(f"[ERROR] Failed to read Database V2: {e}", file=sys.stderr)
-        return False
+        return False, set()
     
     # Create backup
     ts = time.strftime("%Y%m%d-%H%M%S")
@@ -176,7 +186,7 @@ def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[st
         print(f"[INFO] Backup created: {backup}")
     except Exception as e:
         print(f"[ERROR] Failed to create backup: {e}", file=sys.stderr)
-        return False
+        return False, set()
     
     # Create set of current library paths
     current_paths = set(all_tracks)
@@ -211,7 +221,9 @@ def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[st
                 new_paths = current_by_dir[old_dir]
                 if len(new_paths) == 1:
                     # Simple case: one track in directory
-                    record['pfil'] = new_paths[0]
+                    new_path = new_paths[0]
+                    record['pfil'] = new_path
+                    affected_tracks.add(new_path)  # Track the updated path
                     updated += 1
                 # For multiple tracks, we could try to match by filename similarity, but for now skip
     
@@ -288,10 +300,10 @@ def update_database_v2(db_path: Path, all_tracks: List[str], new_tracks: List[st
         print(f"[INFO] Wrote {len(records)} records to Database V2")
         if new_tracks:
             print(f"[INFO] Added {len(new_tracks)} new tracks")
-        return True
+        return True, affected_tracks
     except Exception as e:
         print(f"[ERROR] Failed to write to Database V2: {e}", file=sys.stderr)
-        return False
+        return False, set()
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -416,13 +428,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     new_tracks = detect_new_tracks(all_track_paths, pfil_set_normalized)
     print(f"[INFO] New (not in DB): {len(new_tracks)} tracks")
 
-    # Write crate files if not dry-run
-    write_crate_files(crate_plans, merged_args_obj.dry_run)
-
-    # Update database if requested
+    # Update database first if requested, to get affected tracks
+    affected_tracks = None
     if merged_args_obj.update_db and not merged_args_obj.dry_run:
-        if not update_database_v2(merged_args_obj.db, all_track_paths, new_tracks, merged_args_obj.library_root):
+        success, affected_tracks = update_database_v2(merged_args_obj.db, all_track_paths, new_tracks, merged_args_obj.library_root)
+        if not success:
             return 4
+
+    # Write crate files, limiting to only those with affected tracks
+    # Pass affected tracks to only update crates that actually changed
+    written_crates = write_crate_files(crate_plans, merged_args_obj.dry_run, affected_tracks)
 
     return 0
 
