@@ -78,9 +78,19 @@ def build_crate_plans(
     
     crate_plans = []
     for rel_dir, files in sorted(library_map.items()):
-        ptrks = [build_ptrk(prefix, f) for f in files]
+        if str(rel_dir) == '.':
+            continue # Skip root directory, don't create a crate for it
+
+        # Generate new tracks from directory scan
+        new_ptrks = [build_ptrk(prefix, f) for f in files]
+        
         crate_file = crate_path_for_dir(serato_root, rel_dir)
-        crate_plans.append((crate_file, ptrks))
+        
+        # For directory-based crates, just use the current tracks
+        # Don't merge with existing to avoid duplicating renamed tracks
+        all_ptrks = new_ptrks
+        
+        crate_plans.append((crate_file, all_ptrks))
     
     return crate_plans
 

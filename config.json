@@ -1,6 +1,6 @@
 {
-  "db": "database V2",
-  "library_root": "C:\\Users\\dvize\\Desktop\\Repos\\seratosync",
-  "serato_root": "C:\\Users\\dvize\\Desktop\\Repos\\seratosync",
+  "db": "E:\\_Serato_\\database V2",
+  "library_root": "E:\\Music\\Music Tracks",
+  "serato_root": "E:\\_Serato_",
   "exts": ".mp3,.m4a,.aac,.flac,.wav"
 }

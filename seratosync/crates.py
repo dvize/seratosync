@@ -24,18 +24,21 @@ def is_audio_file(p: Path, allowed_exts: Optional[Set[str]] = None) -> bool:
 
 def crate_path_for_dir(serato_root: Path, dir_rel: Path) -> Path:
     """
-    Generate the crate file path for a directory.
+    Generate the crate file path for a directory using Serato's subcrate naming convention.
     
     Args:
         serato_root: Path to the _Serato_ folder
         dir_rel: Relative path to the directory from library root
         
     Returns:
-        Path to the crate file
+        Path to the single crate file in the Subcrates directory.
     """
-    # Subcrates mirror nested directories. The crate filename is the last folder name.
     subcrates_dir = serato_root / "Subcrates"
-    return (subcrates_dir / dir_rel / (dir_rel.name + ".crate")).resolve()
+    
+    # Join path components with '%%' for the crate filename
+    crate_name = "%%".join(dir_rel.parts) + ".crate"
+    
+    return (subcrates_dir / crate_name).resolve()
 
 
 def build_ptrk(prefix: str, rel_file: Path) -> str:
@@ -86,3 +89,59 @@ def build_crate_payload(track_paths: List[str]) -> bytes:
         inner = make_chunk("ptrk", encode_u16be(path_str))
         payload += make_chunk("otrk", inner)
     return payload
+
+
+def read_crate_file(crate_path: Path) -> List[str]:
+    """
+    Read an existing crate file and extract track paths.
+    
+    Args:
+        crate_path: Path to the crate file
+        
+    Returns:
+        List of ptrk track paths in the crate
+    """
+    if not crate_path.exists():
+        return []
+    
+    track_paths = []
+    try:
+        with open(crate_path, "rb") as fh:
+            from .tlv_utils import iter_nested_tlv
+            import struct
+            import os
+            
+            # Skip vrsn header if present
+            first = fh.read(8)
+            if len(first) == 8:
+                tag = first[:4].decode("ascii", errors="ignore")
+                size = struct.unpack(">I", first[4:])[0]
+                if tag == "vrsn":
+                    fh.read(size)  # skip version
+                else:
+                    fh.seek(-8, os.SEEK_CUR)  # rewind
+            
+            # Parse tracks
+            while True:
+                pos = fh.tell()
+                hdr = fh.read(8)
+                if not hdr or len(hdr) < 8:
+                    break
+                tag = hdr[:4].decode("ascii", errors="ignore")
+                size = struct.unpack(">I", hdr[4:])[0]
+                val = fh.read(size)
+                if tag == "otrk":
+                    # scan nested props for 'ptrk'
+                    for ntag, nsz, nval in iter_nested_tlv(val):
+                        if ntag == "ptrk":
+                            try:
+                                s = nval.decode("utf-16-be").rstrip("\x00")
+                                track_paths.append(s)
+                            except Exception:
+                                continue
+                            break  # Only expect one ptrk per otrk
+    except Exception:
+        # If we can't read the file, return empty list
+        return []
+    
+    return track_paths

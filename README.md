@@ -169,4 +169,4 @@ The code is organized into logical modules:
 
 ## Experimental Features
 
-The `--update-db` feature is experimental and may cause unwanted side-effects if Serato expects more fields in track records. Use with caution and always keep backups of your Database V2 file.
+The `--update-db` feature creates minimal track records in Database V2 for any tracks found in crates but missing from the database. These records include only the essential fields (file path, type, and date added), forcing users to analyze tracks in Serato to populate full metadata and analysis data. This ensures proper Serato integration and lets Serato handle all metadata population.
