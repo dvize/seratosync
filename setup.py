@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="seratosync",
     version="1.0.0",
-    author="Serato Crate Sync",
+    author="dvize",
     description="Mirror folder hierarchy into Serato crates and detect new tracks",
     long_description=long_description,
     long_description_content_type="text/markdown",
