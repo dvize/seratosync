@@ -41,9 +41,27 @@ The tool checks for `config.json` in this order:
 
 ## Installation
 
+### CLI Installation
 ```bash
 pip install -e .
 ```
+
+### GUI Installation
+For the modern graphical interface:
+```bash
+pip install -e .[gui]
+python seratosync_gui.py
+```
+
+**GUI Features:**
+- 🎯 Modern dark theme with intuitive interface
+- 📁 Visual file/directory selection dialogs
+- 🔄 Real-time progress tracking and logging
+- ⚡ One-click sync and update operations
+- 💾 Automatic configuration management
+- 🖥️ Cross-platform support (Windows, macOS, Linux)
+
+See `GUI_INSTALLATION.md` for detailed GUI setup and usage instructions.
 
 ## Usage
 
@@ -167,6 +185,42 @@ The code is organized into logical modules:
 - Crate files are only rewritten if their content has changed
 - The tool is designed to be safe and non-destructive
 
-## Experimental Features
+## Database Update Feature
 
-The `--update-db` feature creates minimal track records in Database V2 for any tracks found in crates but missing from the database. These records include only the essential fields (file path, type, and date added), forcing users to analyze tracks in Serato to populate full metadata and analysis data. This ensures proper Serato integration and lets Serato handle all metadata population.
+The `--update-db` feature safely adds new tracks to Serato's Database V2:
+
+### How it works
+- **Automatic backup**: Creates a timestamped backup before any changes
+- **Safe integration**: Uses the exact Database V2 format that Serato expects
+- **Minimal records**: Creates tracks with essential fields only (path, type, date added)
+- **Serato compatibility**: New tracks appear in Serato and can be analyzed normally
+- **Selective updates**: Only updates crates that contain newly added or modified tracks
+
+### Usage
+```bash
+# Add new tracks to database and update relevant crates
+python -m seratosync --update-db
+
+# Dry run to see what would be added
+python -m seratosync --update-db --dry-run
+```
+
+### What gets added
+New track records include:
+- File path and type
+- Date added timestamp  
+- Default metadata (BPM, key, etc.) that Serato will update when analyzing
+- All required binary fields for database integrity
+
+### Performance
+The tool is optimized for efficiency:
+- Only crates containing new/changed tracks are updated
+- Existing crates with no changes are left untouched
+- Database operations are batched for speed
+
+## Recent Fixes & Improvements
+
+- ✅ **Fixed database corruption**: Resolved WindowsPath encoding issues and version string mismatch
+- ✅ **Selective crate updates**: Only updates crates with actual changes, dramatically improving performance  
+- ✅ **Database compatibility**: Ensures 100% compatibility with Serato's expected format
+- ✅ **Error handling**: Improved error reporting and recovery

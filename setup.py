@@ -30,8 +30,14 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        # No external dependencies required - uses only Python standard library
+        # No external dependencies required for CLI - uses only Python standard library
     ],
+    extras_require={
+        "gui": [
+            "customtkinter>=5.2.0",  # Modern GUI framework
+            "pillow>=9.0.0",         # Image support for GUI
+        ],
+    },
     entry_points={
         "console_scripts": [
             "seratosync=seratosync.cli:main",
