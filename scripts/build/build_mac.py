@@ -20,27 +20,41 @@ def check_macos():
         return False
     return True
 
+def check_virtual_environment():
+    """Check if we're running in a virtual environment."""
+    in_venv = hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    if in_venv:
+        print("✅ Running in virtual environment")
+        venv_path = sys.prefix
+        print(f"📁 Virtual environment: {venv_path}")
+    else:
+        print("⚠️  Not running in a virtual environment")
+        print("   It's recommended to use a virtual environment for building")
+    return True
+
 def install_pyinstaller():
     """Install PyInstaller if not already installed."""
     try:
         import PyInstaller
-        print("✅ PyInstaller is already installed")
+        print(f"✅ PyInstaller {PyInstaller.__version__} is already installed")
         return True
     except ImportError:
         print("📦 Installing PyInstaller...")
         try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], 
+                                  capture_output=True, text=True, check=True)
             print("✅ PyInstaller installed successfully")
             return True
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to install PyInstaller: {e}")
+            print(f"❌ Failed to install PyInstaller")
+            print(f"Error: {e.stderr}")
             return False
 
 def install_dependencies():
     """Install required dependencies for macOS build."""
     dependencies = [
         "kivy>=2.3.0",
-        "kivymd>=2.0.0",
+        "git+https://github.com/kivymd/KivyMD.git",
         "pillow>=9.0.0",
         "pyinstaller>=5.0",
         "materialyoucolor",
@@ -52,12 +66,16 @@ def install_dependencies():
     for dep in dependencies:
         try:
             print(f"Installing {dep}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", dep], 
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result = subprocess.run([sys.executable, "-m", "pip", "install", dep], 
+                                  capture_output=True, text=True, check=True)
+            print(f"✅ {dep} installed successfully")
         except subprocess.CalledProcessError as e:
-            print(f"⚠️  Warning: Failed to install {dep}: {e}")
+            print(f"❌ Failed to install {dep}")
+            print(f"Error: {e.stderr}")
+            return False
     
     print("✅ Dependencies installation completed")
+    return True
 
 def clean_build_dirs():
     """Clean up previous build directories."""
@@ -72,30 +90,63 @@ def build_app():
     """Build the macOS application using PyInstaller."""
     # Get the directory where this script is located
     script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent
     spec_file = script_dir / "seratosync_gui_mac.spec"
     
     if not spec_file.exists():
         print(f"❌ Error: {spec_file} not found!")
         return False
     
+    # Check if GUI file exists
+    gui_file = project_root / "seratosync_gui.py"
+    if not gui_file.exists():
+        print(f"❌ GUI file not found: {gui_file}")
+        return False
+    
+    print(f"📁 Project root: {project_root}")
+    print(f"📄 Spec file: {spec_file}")
+    print(f"📄 GUI file: {gui_file}")
+    
     print("🔨 Building macOS application...")
+    
+    # Change to project root directory
+    original_cwd = os.getcwd()
+    os.chdir(project_root)
+    
     try:
         # Run PyInstaller with the spec file
-        cmd = [sys.executable, "-m", "PyInstaller", "--clean", str(spec_file)]
+        cmd = [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(spec_file)]
+        print(f"🚀 Running command: {' '.join(cmd)}")
+        
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
             print("✅ Build completed successfully!")
+            
+            # Print build output for debugging
+            if result.stdout:
+                print("Build output:")
+                print(result.stdout[-1000:])  # Show last 1000 chars
+            
             return True
         else:
             print("❌ Build failed!")
-            print("STDOUT:", result.stdout)
-            print("STDERR:", result.stderr)
+            print(f"Return code: {result.returncode}")
+            print(f"Command: {' '.join(cmd)}")
+            if result.stdout:
+                print("Standard output:")
+                print(result.stdout[-1000:])  # Show last 1000 chars
+            if result.stderr:
+                print("Error output:")
+                print(result.stderr[-1000:])  # Show last 1000 chars
             return False
             
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"❌ Build failed with error: {e}")
         return False
+    finally:
+        # Restore original working directory
+        os.chdir(original_cwd)
 
 def verify_app():
     """Verify the built application exists and is valid."""
@@ -106,7 +157,7 @@ def verify_app():
         return False
     
     # Check if the executable exists
-    exe_path = os.path.join(app_path, "Contents/MacOS/SeratoSync_GUI_Kivy")
+    exe_path = os.path.join(app_path, "Contents/MacOS/SeratoSync_GUI")
     if not os.path.exists(exe_path):
         print("❌ Executable not found in app bundle!")
         return False
@@ -153,18 +204,23 @@ def main():
     if not check_macos():
         return False
     
+    check_virtual_environment()
+    
     # Install PyInstaller
     if not install_pyinstaller():
         return False
     
     # Install dependencies
-    install_dependencies()
+    if not install_dependencies():
+        print("❌ Failed to install dependencies")
+        return False
     
     # Clean previous builds
     clean_build_dirs()
     
     # Build the application
     if not build_app():
+        print("❌ Build process failed")
         return False
     
     # Verify the build

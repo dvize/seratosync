@@ -34,21 +34,34 @@ def check_python_version():
     print(f"✅ Python {sys.version.split()[0]} detected")
     return True
 
+def check_virtual_environment():
+    """Check if we're running in a virtual environment."""
+    in_venv = hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
+    if in_venv:
+        print("✅ Running in virtual environment")
+        venv_path = sys.prefix
+        print(f"📁 Virtual environment: {venv_path}")
+    else:
+        print("⚠️  Not running in a virtual environment")
+        print("   It's recommended to use a virtual environment for building")
+    return True
+
 def check_pyinstaller():
     """Check if PyInstaller is installed."""
     try:
         import PyInstaller
-        print("✅ PyInstaller is already installed")
+        print(f"✅ PyInstaller {PyInstaller.__version__} is already installed")
         return True
     except ImportError:
         print("📦 Installing PyInstaller...")
         try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller>=5.0"], 
-                         check=True, capture_output=True)
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller>=5.0"], 
+                         check=True, capture_output=True, text=True)
             print("✅ PyInstaller installed successfully")
             return True
         except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to install PyInstaller: {e}")
+            print(f"❌ Failed to install PyInstaller")
+            print(f"Error: {e.stderr}")
             return False
 
 def install_dependencies():
@@ -57,7 +70,7 @@ def install_dependencies():
     
     dependencies = [
         "kivy>=2.3.0",
-        "kivymd>=2.0.0", 
+        "git+https://github.com/kivymd/KivyMD.git", 
         "pillow>=9.0.0",
         "pyinstaller>=5.0",
         "materialyoucolor",
@@ -68,12 +81,16 @@ def install_dependencies():
     for dep in dependencies:
         print(f"Installing {dep}...")
         try:
-            subprocess.run([sys.executable, "-m", "pip", "install", dep], 
-                         check=True, capture_output=True)
+            result = subprocess.run([sys.executable, "-m", "pip", "install", dep], 
+                         check=True, capture_output=True, text=True)
+            print(f"✅ {dep} installed successfully")
         except subprocess.CalledProcessError as e:
-            print(f"⚠️  Warning: Failed to install {dep}: {e}")
+            print(f"❌ Failed to install {dep}")
+            print(f"Error: {e.stderr}")
+            return False
     
     print("✅ Dependencies installation completed")
+    return True
 
 def clean_build_dirs():
     """Clean build and dist directories."""
@@ -97,26 +114,59 @@ def build_executable():
     project_root = script_dir.parent.parent
     spec_file = script_dir / "seratosync_gui_windows.spec"
     
+    # Check if spec file exists
+    if not spec_file.exists():
+        print(f"❌ Spec file not found: {spec_file}")
+        return False
+    
+    # Check if GUI file exists
+    gui_file = project_root / "seratosync_gui.py"
+    if not gui_file.exists():
+        print(f"❌ GUI file not found: {gui_file}")
+        return False
+    
+    print(f"📁 Project root: {project_root}")
+    print(f"📄 Spec file: {spec_file}")
+    print(f"📄 GUI file: {gui_file}")
+    
     # Change to project root directory
+    original_cwd = os.getcwd()
     os.chdir(project_root)
     
-    # Build command
-    cmd = [
-        sys.executable, "-m", "PyInstaller",
-        "--clean",
-        "--noconfirm", 
-        str(spec_file)
-    ]
-    
     try:
+        # Build command
+        cmd = [
+            sys.executable, "-m", "PyInstaller",
+            "--clean",
+            "--noconfirm", 
+            str(spec_file)
+        ]
+        
+        print(f"🚀 Running command: {' '.join(cmd)}")
+        
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
         print("✅ Build completed successfully!")
+        
+        # Print build output for debugging
+        if result.stdout:
+            print("Build output:")
+            print(result.stdout[-1000:])  # Show last 1000 chars
+            
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Build failed!")
         print(f"Return code: {e.returncode}")
-        print(f"Error output: {e.stderr}")
+        print(f"Command: {' '.join(cmd)}")
+        if e.stdout:
+            print("Standard output:")
+            print(e.stdout[-1000:])  # Show last 1000 chars
+        if e.stderr:
+            print("Error output:")
+            print(e.stderr[-1000:])  # Show last 1000 chars
         return False
+    finally:
+        # Restore original working directory
+        os.chdir(original_cwd)
 
 def get_exe_size(exe_path):
     """Get the size of the executable file."""
@@ -134,28 +184,33 @@ def main():
     if not check_python_version():
         return False
     
+    check_virtual_environment()
+    
     if not check_pyinstaller():
         return False
     
     # Install dependencies
-    install_dependencies()
+    if not install_dependencies():
+        print("❌ Failed to install dependencies")
+        return False
     
     # Clean previous builds
     clean_build_dirs()
     
     # Build the executable
     if not build_executable():
+        print("❌ Build process failed")
         return False
     
     # Check the result
-    exe_path = os.path.join("dist", "SeratoSync_GUI.exe")
+    exe_path = os.path.join("dist", "SeratoSync_GUI", "SeratoSync_GUI.exe")
     if os.path.exists(exe_path):
         size = get_exe_size(exe_path)
         print("✅ Executable created successfully!")
         print(f"📊 Executable size: {size}")
         print(f"📁 Location: {os.path.abspath(exe_path)}")
         print("🎉 Build completed successfully!")
-        print("You can find the executable in the 'dist' folder")
+        print("You can find the executable in the 'dist/SeratoSync_GUI' folder")
         print("To test: Double-click 'SeratoSync_GUI.exe'")
         return True
     else:

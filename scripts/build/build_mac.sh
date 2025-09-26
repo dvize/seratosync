@@ -13,10 +13,18 @@ if [[ "$OSTYPE" != "darwin"* ]]; then
     exit 1
 fi
 
+# Get the script directory and project root
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# Change to project root
+cd "$PROJECT_ROOT"
+
 # Check if we're in the right directory
 if [[ ! -f "seratosync_gui.py" ]]; then
     echo "❌ Error: seratosync_gui.py not found"
-    echo "Please run this script from the seratosync project root"
+    echo "Please ensure the script can find the project root"
+    echo "Project root: $PROJECT_ROOT"
     exit 1
 fi
 
@@ -27,7 +35,7 @@ fi
 
 echo "📦 Installing build dependencies..."
 python3 -m pip install --upgrade pip
-python3 -m pip install pyinstaller customtkinter pillow
+python3 -m pip install pyinstaller kivy "git+https://github.com/kivymd/KivyMD.git" pillow materialyoucolor asynckivy asyncgui
 
 if [ $? -ne 0 ]; then
     echo "❌ Failed to install dependencies"
@@ -36,14 +44,15 @@ fi
 
 echo ""
 echo "🔨 Building macOS application..."
-echo "Using spec file: seratosync_gui_mac.spec"
+echo "Using spec file: scripts/build/seratosync_gui_mac.spec"
+echo "Project root: $PROJECT_ROOT"
 echo "-------------------------------------"
 
 # Clean previous builds
 rm -rf build/ dist/
 
 # Build the application
-python3 -m PyInstaller --clean seratosync_gui_mac.spec
+python3 -m PyInstaller --clean scripts/build/seratosync_gui_mac.spec
 
 if [ $? -eq 0 ]; then
     echo ""
