@@ -95,6 +95,9 @@ def normalize_prefix(prefix: Optional[str], inferred_from_db: Optional[str], lib
     """
     Normalize the prefix used for track paths in crates.
     
+    This function provides cross-platform prefix normalization that works consistently
+    between Windows and macOS by intelligently matching database paths with library structure.
+    
     Args:
         prefix: User-specified prefix
         inferred_from_db: Prefix inferred from database
@@ -106,30 +109,67 @@ def normalize_prefix(prefix: Optional[str], inferred_from_db: Optional[str], lib
     if prefix:
         return prefix.strip("/")
     
-    # If we have an inferred prefix, check if it makes sense for the library_root
-    if inferred_from_db:
-        # Convert library_root to the same format as database paths
-        # e.g., /Users/dvize/Music/Music Tracks -> Users/dvize/Music/Music Tracks
-        lib_path_parts = library_root.parts
-        if lib_path_parts[0] == '/':
-            lib_path_parts = lib_path_parts[1:]  # Remove leading slash
-        
-        expected_prefix = '/'.join(lib_path_parts)
-        
-        # If the database contains paths that match our library structure, use that
-        # This handles cases where inferred_from_db is "Users/dvize/Music/MusicUnsorted"
-        # but library_root is "/Users/dvize/Music/Music Tracks"
-        if library_root.name in ["Music Tracks", "Music", "Library"] and "Music" in expected_prefix:
-            return expected_prefix.strip("/")
-        
-        # Otherwise use the inferred prefix
-        return inferred_from_db.strip("/")
+    # Convert library_root to normalized path format (forward slashes, no drive letters)
+    lib_str = str(library_root).replace("\\", "/")
     
-    # fallback to library root path structure
-    lib_path_parts = library_root.parts
-    if lib_path_parts[0] == '/':
-        lib_path_parts = lib_path_parts[1:]  # Remove leading slash
-    return '/'.join(lib_path_parts).strip("/")
+    # Remove drive letters for Windows (e.g., "C:/Users/..." -> "Users/...")
+    if len(lib_str) >= 3 and lib_str[1] == ':':
+        lib_str = lib_str[3:]  # Remove "C:/" prefix
+    
+    # Remove leading slash for Unix-style paths
+    lib_str = lib_str.lstrip("/")
+    
+    if inferred_from_db:
+        # Clean the inferred prefix
+        inferred_clean = inferred_from_db.replace("\\", "/").strip("/")
+        
+        # Remove drive letters from inferred prefix if present
+        if len(inferred_clean) >= 3 and inferred_clean[1] == ':':
+            inferred_clean = inferred_clean[3:]
+        
+        # Check if the inferred prefix is a reasonable match for our library root
+        lib_parts = lib_str.split('/')
+        inferred_parts = inferred_clean.split('/')
+        
+        # Strategy 1: Exact match - use inferred (with any casing corrections applied later)
+        if lib_str.lower() == inferred_clean.lower():
+            return inferred_clean
+            
+        # Strategy 2: If inferred prefix is contained in library root, use inferred
+        # This handles cases where library_root="E:/Music/Music Tracks" but database has "E:/Music/..."
+        # In this case, we want to use "Music" as the prefix, not "Music/Music Tracks"
+        if lib_str.lower().startswith(inferred_clean.lower() + "/"):
+            return inferred_clean
+        
+        # Strategy 3: If library root is contained in inferred prefix, use inferred (more specific)
+        # This handles cases where library_root="E:/Music" but database has "E:/Music/Music Tracks/..."  
+        if inferred_clean.lower().startswith(lib_str.lower() + "/"):
+            return inferred_clean
+            
+        # Strategy 3: Find longest common path between inferred and library root
+        common_parts = []
+        for i, (lib_part, inf_part) in enumerate(zip(lib_parts, inferred_parts)):
+            if lib_part.lower() == inf_part.lower():  # Case-insensitive match
+                # Preserve the casing from library_root (user's preference)
+                common_parts.append(lib_part)
+            else:
+                break
+        
+        if common_parts:
+            # If inferred has more specificity, use the inferred prefix
+            # If library has more specificity, use library prefix  
+            # This ensures we use the most specific path that represents actual database structure
+            if len(inferred_parts) > len(lib_parts):
+                # Inferred is more specific - use it but preserve library root casing for common parts
+                result_parts = common_parts + inferred_parts[len(common_parts):]
+                return '/'.join(result_parts)
+            elif len(lib_parts) >= len(inferred_parts):
+                # Library is more specific or equal - use library casing
+                return '/'.join(lib_parts)        # Fallback: Use inferred prefix if we can't determine a better match
+        return inferred_clean
+    
+    # Final fallback: Use library root structure
+    return lib_str
 
 def read_database_v2_records(db_path: Path) -> List[dict]:
     """

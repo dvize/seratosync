@@ -451,21 +451,58 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Normalize the database paths to match the format of scanned paths
     # AND filter to only include tracks within the specified library_root
     pfil_set_normalized = set()
-    library_root_str = str(merged_args_obj.library_root).replace("\\", "/")
     
-    # Remove leading slash from library root for comparison with database paths
-    library_root_normalized = library_root_str.lstrip("/")
+    def normalize_path_for_comparison(path_str):
+        """Normalize a path string for cross-platform comparison."""
+        # Convert to forward slashes
+        normalized = path_str.replace("\\", "/")
+        # Remove drive letters (C:, E:, etc.)
+        if len(normalized) >= 3 and normalized[1] == ':':
+            normalized = normalized[3:]  # Remove "C:/" or "E:/"
+        # Remove leading slash
+        normalized = normalized.lstrip("/")
+        return normalized
+    
+    # Normalize library root for comparison
+    library_root_normalized = normalize_path_for_comparison(str(merged_args_obj.library_root))
+    prefix_normalized = normalize_path_for_comparison(prefix)
+    
+    # Debug: Show what we're looking for
+    print(f"[DEBUG] Looking for paths containing: '{library_root_normalized}'")
+    print(f"[DEBUG] Using normalized prefix: '{prefix_normalized}'")
     
     for p_raw in pfil_set_raw:
-        p_norm = p_raw.replace("\\", "/")
+        p_norm = normalize_path_for_comparison(p_raw)
         
-        # Only process tracks that are within the specified library root
-        # Database paths typically don't have leading slash
-        if library_root_normalized in p_norm:
-            if f"{prefix}/" in p_norm:
-                # Strip everything before the prefix to align paths
-                p_norm = f"{prefix}/" + p_norm.split(f"{prefix}/", 1)[1]
-            pfil_set_normalized.add(p_norm)
+        # Check if this database path is within our library root
+        # Use more flexible matching - check if library path components are in database path
+        lib_parts = [part for part in library_root_normalized.split('/') if part]
+        path_parts = [part for part in p_norm.split('/') if part]
+        
+        # Find if library root path is contained in database path
+        library_in_database = False
+        
+        # Try to find the library root sequence in the database path
+        if len(lib_parts) <= len(path_parts):
+            for i in range(len(path_parts) - len(lib_parts) + 1):
+                if path_parts[i:i+len(lib_parts)] == lib_parts:
+                    library_in_database = True
+                    break
+        
+        if library_in_database:
+            # Reconstruct path using the prefix format expected by crate generation
+            # This ensures database paths match the format created by build_ptrk()
+            if prefix_normalized and prefix_normalized in p_norm:
+                # Make sure the path starts with prefix for consistency
+                if not p_norm.startswith(prefix_normalized + "/"):
+                    # Find where prefix appears and reconstruct
+                    prefix_pos = p_norm.find(prefix_normalized)
+                    if prefix_pos >= 0:
+                        p_norm = prefix_normalized + "/" + p_norm[prefix_pos + len(prefix_normalized):].lstrip("/")
+                pfil_set_normalized.add(p_norm)
+            else:
+                # If no prefix match, add as-is but ensure consistent format
+                pfil_set_normalized.add(p_norm)
     
     print(f"[INFO] Database tracks: {total:,}; filtered to {len(pfil_set_normalized)} tracks within library root")
 
@@ -510,10 +547,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not success:
             return 4
     
-    # If we're not updating the DB but have new tracks, we still need to limit crate writes
+    # If we're not updating the DB, we still need to limit crate writes
     # to only those crates that contain new tracks
-    if affected_tracks is None and new_tracks:
+    if affected_tracks is None:
         # Use the new tracks as affected tracks to limit crate writes
+        # If no new tracks, use empty set to skip all crates
         affected_tracks = set(new_tracks)
 
     # Write crate files, limiting to only those with affected tracks

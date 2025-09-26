@@ -58,7 +58,16 @@ class SeratoSyncGUI(MDApp):
         
         # Configuration
         self.config = {}
-        self.config_file = "config.json"
+        
+        # For executable, use config file next to the executable
+        # For development, use current working directory
+        if getattr(sys, 'frozen', False):
+            # Running as executable - use executable's directory
+            executable_dir = Path(sys.executable).parent
+            self.config_file = executable_dir / "config.json"
+        else:
+            # Running in development - use current working directory
+            self.config_file = Path("config.json")
         
         # Dialog references
         self.file_manager = None
@@ -334,6 +343,9 @@ class SeratoSyncGUI(MDApp):
         self.exit_file_manager()
         field_description = "Serato database" if self.current_field == "serato_db" else "music library"
         self.log_message(f"Selected {field_description} path: {path}")
+        
+        # Automatically save configuration when a path is selected
+        self.save_config()
     
     def exit_file_manager(self, *args):
         """Close file manager."""
@@ -616,13 +628,8 @@ class SeratoSyncGUI(MDApp):
                     Clock.schedule_once(lambda dt: toast("Database V2 file not found"), 0)
                     return
                 
-                # Add scripts/debug to path and import database_cleanup
-                debug_path = Path(__file__).parent / "scripts" / "debug"
-                sys.path.insert(0, str(debug_path))
-                try:
-                    import database_cleanup
-                finally:
-                    sys.path.remove(str(debug_path))
+                # Import database cleanup functions
+                from seratosync.cleanup import analyze_database_issues, backup_database, clean_database_records
                 
                 # Read current database
                 Clock.schedule_once(lambda dt: self.log_message("Reading database records..."), 0)
@@ -630,7 +637,7 @@ class SeratoSyncGUI(MDApp):
                 
                 # Analyze before cleanup
                 Clock.schedule_once(lambda dt: self.log_message("Analyzing database for issues..."), 0)
-                analysis = database_cleanup.analyze_database_issues(records)
+                analysis = analyze_database_issues(records)
                 
                 analysis_msg = (
                     f"Database analysis:\n"
@@ -644,12 +651,12 @@ class SeratoSyncGUI(MDApp):
                 
                 # Create backup
                 Clock.schedule_once(lambda dt: self.log_message("Creating database backup..."), 0)
-                backup_path = database_cleanup.backup_database(db_file)
+                backup_path = backup_database(db_file)
                 Clock.schedule_once(lambda dt: self.log_message(f"Backup saved: {backup_path.name}"), 0)
                 
                 # Clean records
                 Clock.schedule_once(lambda dt: self.log_message("Cleaning database records..."), 0)
-                cleaned_records, stats = database_cleanup.clean_database_records(
+                cleaned_records, stats = clean_database_records(
                     records,
                     remove_duplicates=True,
                     require_metadata=True
@@ -724,39 +731,103 @@ class SeratoSyncGUI(MDApp):
             self.status_text.text_size = (scroll_width, None)
     
     def load_config(self):
-        """Load configuration from file."""
+        """Load configuration from file with cross-compatibility."""
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
+            if self.config_file.exists():
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.config = json.load(f)
                 
-                # Update UI fields
-                if 'serato_db_path' in self.config:
-                    self.serato_db_entry.text = self.config['serato_db_path']
-                if 'music_library_path' in self.config:
-                    self.crates_path_entry.text = self.config['music_library_path']
-                elif 'crates_path' in self.config:  # Backward compatibility
-                    self.crates_path_entry.text = self.config['crates_path']
+                # Handle different config formats for compatibility
+                serato_path = ""
+                library_path = ""
                 
-                self.log_message("Configuration loaded successfully!")
+                # GUI format (preferred)
+                if 'serato_db_path' in self.config:
+                    serato_path = self.config['serato_db_path']
+                elif 'serato_root' in self.config:
+                    # CLI format - convert from _Serato_ folder to database file
+                    serato_root = self.config['serato_root']
+                    if serato_root and not serato_root.endswith('database V2'):
+                        serato_path = str(Path(serato_root) / 'database V2')
+                    else:
+                        serato_path = serato_root
+                elif 'db' in self.config:
+                    # CLI format - direct database file path
+                    serato_path = self.config['db']
+                
+                if 'music_library_path' in self.config:
+                    library_path = self.config['music_library_path']
+                elif 'library_root' in self.config:
+                    # CLI format
+                    library_path = self.config['library_root']
+                elif 'crates_path' in self.config:
+                    # Old format
+                    library_path = self.config['crates_path']
+                
+                # Update UI fields
+                if serato_path:
+                    self.serato_db_entry.text = serato_path
+                if library_path:
+                    self.crates_path_entry.text = library_path
+                
+                self.log_message(f"Configuration loaded from: {self.config_file}")
             else:
-                self.log_message("No existing configuration found. Using defaults.")
+                self.log_message(f"No configuration file found at: {self.config_file}")
+                self.log_message("Configure paths and they will be saved automatically.")
                 
         except Exception as e:
             self.log_message(f"Error loading configuration: {e}")
     
     def save_config(self):
-        """Save current configuration to file."""
+        """Save current configuration to file in compatible format."""
         try:
-            self.config.update({
-                'serato_db_path': self.serato_db_entry.text.strip(),
-                'music_library_path': self.crates_path_entry.text.strip(),
-            })
+            # Get current paths from UI
+            serato_path = self.serato_db_entry.text.strip()
+            library_path = self.crates_path_entry.text.strip()
             
-            with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
-            
-            self.log_message("Configuration saved successfully!")
+            # Only save if we have valid paths
+            if serato_path or library_path:
+                # Save in format compatible with both GUI and CLI
+                config_to_save = {}
+                
+                if serato_path:
+                    # Save both formats for maximum compatibility
+                    config_to_save['serato_db_path'] = serato_path  # GUI format
+                    if serato_path.endswith('database V2'):
+                        # Extract serato_root for CLI compatibility
+                        serato_root = str(Path(serato_path).parent)
+                        config_to_save['serato_root'] = serato_root
+                        config_to_save['db'] = serato_path  # Direct path for CLI
+                    else:
+                        # Assume it's a serato root directory
+                        config_to_save['serato_root'] = serato_path
+                        config_to_save['db'] = str(Path(serato_path) / 'database V2')
+                
+                if library_path:
+                    config_to_save['music_library_path'] = library_path  # GUI format
+                    config_to_save['library_root'] = library_path  # CLI format
+                
+                # Add other CLI-compatible defaults
+                if 'exts' not in config_to_save:
+                    config_to_save['exts'] = '.mp3,.m4a,.aac,.flac,.wav'
+                
+                # Preserve any existing config values not handled above
+                for key, value in self.config.items():
+                    if key not in config_to_save:
+                        config_to_save[key] = value
+                
+                # Update internal config
+                self.config = config_to_save
+                
+                # Create directory if it doesn't exist
+                self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    json.dump(config_to_save, f, indent=2, ensure_ascii=False)
+                
+                self.log_message(f"Configuration saved to: {self.config_file}")
+            else:
+                self.log_message("No paths configured to save.")
             
         except Exception as e:
             self.log_message(f"Error saving configuration: {e}")
