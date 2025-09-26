@@ -1,797 +1,782 @@
 #!/usr/bin/env python3
 """
-Serato Sync GUI Application
-
-A modern cross-platform GUI for managing Serato sync configuration and operations.
-Built with CustomTkinter for a modern appearance on Windows and macOS.
+Serato Sync GUI - Kivy Implementation
+A modern cross-platform GUI for the Serato Sync application using Kivy and KivyMD.
 """
 
-import tkinter as tk
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
-import json
-import sys
 import os
-import shutil
-import subprocess
-from pathlib import Path
-from typing import Dict, Any, Optional
+import sys
+import json
 import threading
-import time
-import datetime
+from pathlib import Path
+from datetime import datetime
 
+# Configure Kivy before other imports
+from kivy.config import Config
+Config.set('graphics', 'width', '900')
+Config.set('graphics', 'height', '700')  # Increased from default ~600 to 700
 
-class ToolTip:
-    """Create a tooltip for a given widget."""
-    def __init__(self, widget, text='widget info'):
-        self.widget = widget
-        self.text = text
-        self.widget.bind("<Enter>", self.enter)
-        self.widget.bind("<Leave>", self.leave)
-        self.tipwindow = None
+# Kivy imports
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.scrollview import ScrollView
+from kivy.clock import Clock
+from kivy.metrics import dp
+from kivy.logger import Logger
 
-    def enter(self, event=None):
-        self.show_tooltip()
+# KivyMD imports
+from kivymd.app import MDApp
+from kivymd.uix.card import MDCard
+from kivymd.uix.label import MDLabel
+from kivymd.uix.button import MDButton, MDButtonText
+from kivymd.uix.textfield import MDTextField
+from kivymd.uix.dialog import MDDialog, MDDialogHeadlineText, MDDialogSupportingText, MDDialogButtonContainer
+from kivymd.uix.filemanager import MDFileManager
+from kivymd.uix.appbar import MDTopAppBar, MDTopAppBarTitle
+from kivymd.uix.scrollview import MDScrollView
+from kivymd.uix.gridlayout import MDGridLayout
+from kivymd.uix.boxlayout import MDBoxLayout
+# Platform-specific imports for toast
+try:
+    from kivymd.toast import toast
+except TypeError:
+    # Fallback for macOS - toast not supported on desktop
+    def toast(message, duration=2.0):
+        print(f"Toast: {message}")  # Simple fallback
 
-    def leave(self, event=None):
-        self.hide_tooltip()
+# Add seratosync module to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-    def show_tooltip(self):
-        if self.tipwindow or not self.text:
-            return
-        x, y, cx, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 25
-        y = y + cy + self.widget.winfo_rooty() + 25
+class SeratoSyncGUI(MDApp):
+    """Main GUI application class using KivyMD."""
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.theme_cls.theme_style = "Dark"
+        self.theme_cls.primary_palette = "Darkorange"
+        self.theme_cls.accent_palette = "Orange"
         
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
+        # Configuration
+        self.config = {}
+        self.config_file = "config.json"
         
-        label = tk.Label(tw, text=self.text, justify='left',
-                        background='#ffffe0', relief='solid', borderwidth=1,
-                        font=('Arial', '10', 'normal'), wraplength=300)
-        label.pack(ipadx=1)
-
-    def hide_tooltip(self):
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
-
-
-def detect_database_version(db_path: str) -> tuple[bool, str]:
-    """
-    Detect if the database is Serato V2 format.
-    Returns (is_v2, version_info)
-    """
-    try:
-        if not os.path.exists(db_path):
-            return False, "Database file not found"
-            
-        with open(db_path, 'rb') as f:
-            # Read more bytes to ensure we catch the version string
-            header = f.read(200)
-            
-        # Check for V2 format indicators directly in bytes first
-        if b'2.0/Serato Scratch LIVE Database' in header:
-            return True, "Serato Database V2 (Compatible)"
-            
-        # Check for UTF-16LE encoded V2 signature (common in newer Serato versions)
-        # Use a shorter signature that should be contained within our header read
-        v2_signature_utf16 = '2.0/Serato Scratch LIVE Databa'.encode('utf-16le')
-        if v2_signature_utf16 in header:
-            return True, "Serato Database V2 (Compatible)"
-            
-        # Check for legacy patterns
-        if b'Serato ScratchLive database' in header:
-            return False, "Legacy Serato Database (V1 - INCOMPATIBLE)"
-            
-        # Check for UTF-16LE encoded legacy signature
-        legacy_signature_utf16 = 'Serato ScratchLive database'.encode('utf-16le')
-        if legacy_signature_utf16 in header:
-            return False, "Legacy Serato Database (V1 - INCOMPATIBLE)"
-            
-        # Check for any database-related content (case insensitive)
-        if b'database' in header.lower() or 'database'.encode('utf-16le') in header:
-            return False, "Unknown Serato Database Format (Possibly Legacy - INCOMPATIBLE)"
-        else:
-            return False, "Not a recognized Serato database file"
-            
-    except Exception as e:
-        return False, f"Error reading database: {str(e)}"
-
-
-# Set appearance mode and color theme
-ctk.set_appearance_mode("system")  # Modes: system (default), light, dark
-ctk.set_default_color_theme("blue")  # Themes: blue (default), dark-blue, green
-
-
-class SeratoSyncGUI:
-    def __init__(self):
-        self.root = ctk.CTk()
-        self.root.title("Serato Sync V2 ONLY - Configuration & Operations")
-        self.root.geometry("950x900")
-        self.root.minsize(900, 850)
+        # Dialog references
+        self.file_manager = None
+        self.current_field = None
+        self.status_text = None
         
-        # Configuration data
-        self.config_data = {}
-        self.config_file_path = "config.json"
+        # Database version check result
+        self.db_version_result = None
         
-        # Show critical startup warning
-        self.show_startup_warning()
+    def build(self):
+        """Build the main UI."""
+        self.title = "Serato Sync - Modern GUI"
         
-        # Setup UI
-        self.setup_ui()
-        self.load_config()
-        
-    def show_startup_warning(self):
-        """Show critical compatibility warning at startup."""
-        response = messagebox.askyesno(
-            "⚠️ CRITICAL: Serato V2 Compatibility Warning ⚠️",
-            "🚫 DANGER: This application is ONLY for Serato V2 databases! 🚫\n\n"
-            "✅ COMPATIBLE WITH:\n"
-            "• Serato V2 (New Beta Version)\n"
-            "• Modern Serato installations\n\n"
-            "🚫 NOT COMPATIBLE WITH:\n"
-            "• Legacy Serato databases\n"
-            "• Older Serato versions\n"
-            "• Non-V2 database formats\n\n"
-            "⚠️ WARNING: Using this tool with incompatible databases will:\n"
-            "• Completely corrupt your music library\n"
-            "• Destroy all playlists and crates\n"
-            "• Cause irreversible data loss\n\n"
-            "🔒 SAFETY FEATURES:\n"
-            "• Automatic database version detection\n"
-            "• Blocking of incompatible operations\n"
-            "• Multiple confirmation dialogs\n\n"
-            "Do you understand these risks and confirm you are using Serato V2?"
+        # Main layout
+        main_layout = MDBoxLayout(
+            orientation="vertical", 
+            spacing=dp(10), 
+            padding=dp(20),
+            md_bg_color=self.theme_cls.backgroundColor
         )
         
-        if not response:
-            messagebox.showinfo("Application Cancelled", 
-                              "Application closed for safety.\n\n"
-                              "Only proceed if you are certain you have Serato V2 (new beta).")
-            sys.exit(0)
+        # Add toolbar
+        toolbar = MDTopAppBar(
+            MDTopAppBarTitle(text="Serato Sync"),
+            md_bg_color=self.theme_cls.primaryColor,
+        )
+        main_layout.add_widget(toolbar)
         
-    def setup_ui(self):
-        """Setup the main UI components."""
+        # Create scroll view for content
+        scroll = MDScrollView(
+            md_bg_color=self.theme_cls.backgroundColor
+        )
+        content_layout = MDBoxLayout(
+            orientation="vertical", 
+            spacing=dp(15), 
+            adaptive_height=True,
+            padding=dp(10)
+        )
         
-        # Main frame with padding
-        main_frame = ctk.CTkFrame(self.root)
-        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        # Add sections
+        content_layout.add_widget(self.create_config_section())
+        content_layout.add_widget(self.create_operations_section())
+        content_layout.add_widget(self.create_status_section())
+        
+        scroll.add_widget(content_layout)
+        main_layout.add_widget(scroll)
+        
+        # Load configuration
+        Clock.schedule_once(lambda dt: self.load_config(), 0.5)
+        
+        # Show startup warning after build
+        Clock.schedule_once(lambda dt: self.show_startup_warning(), 1.0)
+        
+        return main_layout
+    
+    def create_config_section(self):
+        """Create configuration section."""
+        card = MDCard(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(300),
+            elevation=3,
+            padding=dp(15),
+            spacing=dp(10),
+            md_bg_color=self.theme_cls.surfaceVariantColor,
+            radius=[10, 10, 10, 10]
+        )
         
         # Title
-        title_label = ctk.CTkLabel(
-            main_frame, 
-            text="Serato Sync Configuration (V2 ONLY)", 
-            font=ctk.CTkFont(size=20, weight="bold")
+        title = MDLabel(
+            text="Configuration",
+            font_style="Title",
+            theme_text_color="Primary",
+            size_hint_y=None,
+            height=dp(40),
+            bold=True
         )
-        title_label.pack(pady=(0, 8))
+        card.add_widget(title)
         
-        # Compatibility warning
-        warning_label = ctk.CTkLabel(
-            main_frame, 
-            text="⚠️ WARNING: Only compatible with Serato V2 databases (new beta) ⚠️", 
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#e74c3c"
+        # Configuration fields
+        config_layout = MDBoxLayout(orientation="vertical", spacing=dp(10), adaptive_height=True)
+        
+        # Serato DB path
+        self.serato_db_entry = MDTextField(
+            hint_text="Path to Serato database directory (e.g., ~/Music/_Serato_)",
+            size_hint_y=None,
+            height=dp(60)
         )
-        warning_label.pack(pady=(0, 15))
+        config_layout.add_widget(self.serato_db_entry)
         
-        # Configuration section
-        self.setup_config_section(main_frame)
-        
-        # Operations section
-        self.setup_operations_section(main_frame)
-        
-        # Status section
-        self.setup_status_section(main_frame)
-        
-    def setup_config_section(self, parent):
-        """Setup the configuration section."""
-        
-        config_frame = ctk.CTkFrame(parent)
-        config_frame.pack(fill="x", pady=(0, 15))
-        
-        # Section title
-        config_title = ctk.CTkLabel(
-            config_frame, 
-            text="Configuration Settings", 
-            font=ctk.CTkFont(size=16, weight="bold")
+        # Browse button for Serato DB
+        browse_serato_btn = MDButton(
+            MDButtonText(text="Browse Serato DB"),
+            style="filled",
+            size_hint_y=None,
+            height=dp(36),
+            on_release=lambda x: self.browse_for_directory("serato_db")
         )
-        config_title.pack(pady=(15, 10))
+        config_layout.add_widget(browse_serato_btn)
         
-        # Config fields frame
-        fields_frame = ctk.CTkFrame(config_frame)
-        fields_frame.pack(fill="x", padx=15, pady=(0, 15))
-        
-        # Library root path
-        lib_entry = self.setup_path_field(
-            fields_frame, 
-            "Music Library Root:", 
-            "library_root", 
-            "Select music library root directory"
+        # Music library path
+        self.crates_path_entry = MDTextField(
+            hint_text="Path to your Music Library folder (directory containing music files/folders to sync as crates)",
+            size_hint_y=None,
+            height=dp(60)
         )
-        ToolTip(lib_entry, "The top-level folder containing your music files.\nThis is where seratosync will scan for tracks to organize into crates.")
+        config_layout.add_widget(self.crates_path_entry)
         
-        # Serato root path
-        serato_entry = self.setup_path_field(
-            fields_frame, 
-            "Serato Root Directory:", 
-            "serato_root", 
-            "Select _Serato_ directory"
+        # Browse button for music library
+        browse_crates_btn = MDButton(
+            MDButtonText(text="Browse Music Library"),
+            style="filled",
+            size_hint_y=None,
+            height=dp(36),
+            on_release=lambda x: self.browse_for_directory("crates_path")
         )
-        ToolTip(serato_entry, "Your Serato installation directory (usually named '_Serato_').\nContains your Database V2, crate files, and other Serato data.")
+        config_layout.add_widget(browse_crates_btn)
         
-        # Extensions field
-        ext_entry = self.setup_text_field(
-            fields_frame,
-            "Audio Extensions:",
-            "exts",
-            "Comma-separated: .mp3,.m4a,.aac,.flac,.wav"
+        card.add_widget(config_layout)
+        return card
+    
+    def create_operations_section(self):
+        """Create operations section."""
+        card = MDCard(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(250),
+            elevation=3,
+            padding=dp(15),
+            spacing=dp(10),
+            md_bg_color=self.theme_cls.surfaceVariantColor,
+            radius=[10, 10, 10, 10]
         )
-        ToolTip(ext_entry, "File extensions to include when scanning your music library.\nSeparate multiple extensions with commas (e.g., .mp3,.aac,.flac,.m4a)")
         
-        # Config file operations
-        config_ops_frame = ctk.CTkFrame(config_frame)
-        config_ops_frame.pack(fill="x", padx=15, pady=(0, 15))
+        # Title
+        title = MDLabel(
+            text="Operations",
+            font_style="Title",
+            theme_text_color="Primary",
+            size_hint_y=None,
+            height=dp(40),
+            bold=True
+        )
+        card.add_widget(title)
         
-        ctk.CTkButton(
-            config_ops_frame,
-            text="Save Configuration",
-            command=self.save_config,
-            height=30,
-            font=ctk.CTkFont(size=12)
-        ).pack(pady=8)
+        # Operation buttons
+        ops_layout = MDBoxLayout(orientation="vertical", spacing=dp(10), adaptive_height=True)
         
-    def setup_path_field(self, parent, label_text, config_key, dialog_title, file_mode=False):
-        """Setup a path input field with browse button."""
+        sync_btn = MDButton(
+            MDButtonText(text="Sync Music Folders to Crates"),
+            style="filled",
+            size_hint_y=None,
+            height=dp(40),
+            on_release=lambda x: self.sync_library()
+        )
+        ops_layout.add_widget(sync_btn)
         
-        row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        row_frame.pack(fill="x", pady=3)
+        report_btn = MDButton(
+            MDButtonText(text="Generate Database Report"),
+            style="filled",
+            size_hint_y=None,
+            height=dp(40),
+            on_release=lambda x: self.generate_report()
+        )
+        ops_layout.add_widget(report_btn)
         
-        # Label
-        label = ctk.CTkLabel(row_frame, text=label_text, width=180, anchor="w", font=ctk.CTkFont(size=12))
-        label.pack(side="left", padx=(8, 4))
+        cleanup_btn = MDButton(
+            MDButtonText(text="Clean Database (Remove Duplicates & Corruption)"),
+            style="filled",
+            size_hint_y=None,
+            height=dp(40),
+            on_release=lambda x: self.clean_database()
+        )
+        ops_layout.add_widget(cleanup_btn)
         
-        # Entry
-        entry = ctk.CTkEntry(row_frame, height=28, font=ctk.CTkFont(size=11))
-        entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        card.add_widget(ops_layout)
+        return card
+    
+    def create_status_section(self):
+        """Create status and logs section."""
+        card = MDCard(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(300),
+            elevation=3,
+            padding=dp(15),
+            spacing=dp(10),
+            md_bg_color=self.theme_cls.surfaceVariantColor,
+            radius=[10, 10, 10, 10]
+        )
         
-        # Browse button
-        def browse_callback():
-            if file_mode:
-                path = filedialog.askopenfilename(
-                    title=dialog_title,
-                    filetypes=[("Database files", "*"), ("All files", "*.*")]
+        # Title
+        title = MDLabel(
+            text="Status & Logs",
+            font_style="Title",
+            theme_text_color="Primary",
+            size_hint_y=None,
+            height=dp(40),
+            bold=True
+        )
+        card.add_widget(title)
+        
+        # Status text area (using scrollable label)
+        self.scroll_view = ScrollView(
+            size_hint=(1, 1),
+            do_scroll_x=False,
+            do_scroll_y=True,
+            bar_width=dp(10),
+            scroll_type=['bars', 'content']
+        )
+        self.status_text = MDLabel(
+            text="Serato Sync GUI initialized.\nReady for operations...",
+            text_size=(None, None),
+            theme_text_color="Secondary",
+            font_name="RobotoMono-Regular",
+            font_size="12sp",
+            halign="left",
+            valign="top",
+            size_hint_y=None
+        )
+        # Bind the text height to allow proper scrolling
+        self.status_text.bind(texture_size=self.update_text_height)
+        
+        self.scroll_view.add_widget(self.status_text)
+        card.add_widget(self.scroll_view)
+        
+        return card
+    
+    def browse_for_directory(self, field_name):
+        """Open file manager to browse for directory."""
+        self.current_field = field_name
+        
+        if not self.file_manager:
+            self.file_manager = MDFileManager(
+                exit_manager=self.exit_file_manager,
+                select_path=self.select_path,
+            )
+        
+        # Set initial path
+        initial_path = "/"
+        if field_name == "serato_db":
+            # Try to find common Serato paths
+            common_paths = [
+                os.path.expanduser("~/Music/_Serato_"),
+                os.path.expanduser("~/Documents/_Serato_"),
+                os.path.expanduser("~/_Serato_")
+            ]
+            for path in common_paths:
+                if os.path.exists(path):
+                    initial_path = path
+                    break
+        elif field_name == "crates_path":
+            # Try to find common music library paths
+            common_paths = [
+                os.path.expanduser("~/Music"),
+                os.path.expanduser("~/Documents/Music"),
+                os.path.expanduser("~/Desktop")
+            ]
+            for path in common_paths:
+                if os.path.exists(path):
+                    initial_path = path
+                    break
+        
+        self.file_manager.show(initial_path)
+    
+    def select_path(self, path):
+        """Handle path selection from file manager."""
+        if self.current_field == "serato_db":
+            self.serato_db_entry.text = path
+        elif self.current_field == "crates_path":
+            self.crates_path_entry.text = path
+        
+        self.exit_file_manager()
+        field_description = "Serato database" if self.current_field == "serato_db" else "music library"
+        self.log_message(f"Selected {field_description} path: {path}")
+    
+    def exit_file_manager(self, *args):
+        """Close file manager."""
+        if self.file_manager:
+            self.file_manager.close()
+    
+    def show_startup_warning(self):
+        """Show startup warning dialog."""
+        def close_dialog(instance):
+            self.dialog.dismiss()
+            # Check database version after dialog
+            self.check_database_version()
+        
+        self.dialog = MDDialog(
+            MDDialogHeadlineText(text="Important Notice"),
+            MDDialogSupportingText(
+                text=(
+                    "This application modifies your Serato database files. "
+                    "Please ensure you have backed up your Serato library before proceeding.\n\n"
+                    "The application will check your database version compatibility."
                 )
-            else:
-                path = filedialog.askdirectory(title=dialog_title)
-                
-            if path:
-                entry.delete(0, tk.END)
-                entry.insert(0, path)
-        
-        browse_btn = ctk.CTkButton(
-            row_frame,
-            text="Browse",
-            command=browse_callback,
-            width=70,
-            height=28,
-            font=ctk.CTkFont(size=11)
+            ),
+            MDDialogButtonContainer(
+                MDButton(
+                    MDButtonText(text="I UNDERSTAND"),
+                    style="filled",
+                    on_release=close_dialog
+                ),
+            ),
         )
-        browse_btn.pack(side="right", padx=(0, 8))
-        
-        # Store reference to entry widget
-        setattr(self, f"{config_key}_entry", entry)
-        return entry
-        
-    def setup_text_field(self, parent, label_text, config_key, placeholder_text=""):
-        """Setup a text input field."""
-        
-        row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        row_frame.pack(fill="x", pady=3)
-        
-        # Label
-        label = ctk.CTkLabel(row_frame, text=label_text, width=180, anchor="w", font=ctk.CTkFont(size=12))
-        label.pack(side="left", padx=(8, 4))
-        
-        # Entry
-        entry = ctk.CTkEntry(row_frame, placeholder_text=placeholder_text, height=28, font=ctk.CTkFont(size=11))
-        entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        
-        # Store reference to entry widget
-        setattr(self, f"{config_key}_entry", entry)
-        return entry
-        
-    def setup_operations_section(self, parent):
-        """Setup the operations sections."""
-        
-        # Preview Changes section
-        self.setup_preview_section(parent)
-        
-        # Database Operations section
-        self.setup_database_section(parent)
-        
-    def setup_preview_section(self, parent):
-        """Setup the preview changes section."""
-        
-        preview_frame = ctk.CTkFrame(parent)
-        preview_frame.pack(fill="x", pady=(0, 8))
-        
-        # Section title
-        preview_title = ctk.CTkLabel(
-            preview_frame, 
-            text="Preview Changes", 
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        preview_title.pack(pady=(15, 10))
-        
-        # Preview button
-        preview_buttons_frame = ctk.CTkFrame(preview_frame)
-        preview_buttons_frame.pack(fill="x", padx=15, pady=(0, 15))
-        
-        dry_run_btn = ctk.CTkButton(
-            preview_buttons_frame,
-            text="👀 Dry Run (Preview Changes)",
-            command=self.run_dry_run,
-            height=32,
-            font=ctk.CTkFont(size=12)
-        )
-        dry_run_btn.pack(fill="x", pady=8)
-        ToolTip(dry_run_btn, "Preview what changes will be made without modifying any files.\nCompletely safe - shows you exactly what would happen.")
-        
-    def setup_database_section(self, parent):
-        """Setup the database operations section."""
-        
-        db_frame = ctk.CTkFrame(parent)
-        db_frame.pack(fill="x", pady=(0, 15))
-        
-        # Section title
-        db_title = ctk.CTkLabel(
-            db_frame, 
-            text="Database Operations", 
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        db_title.pack(pady=(15, 10))
-        
-        # Database operations buttons
-        db_buttons_frame = ctk.CTkFrame(db_frame)
-        db_buttons_frame.pack(fill="x", padx=15, pady=(0, 15))
-        
-        # Backup and Restore row
-        backup_row_frame = ctk.CTkFrame(db_buttons_frame, fg_color="transparent")
-        backup_row_frame.pack(fill="x", pady=(8, 4))
-        
-        backup_btn = ctk.CTkButton(
-            backup_row_frame,
-            text="🔒 Backup Database V2",
-            command=self.backup_database,
-            height=32,
-            font=ctk.CTkFont(size=12)
-        )
-        backup_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ToolTip(backup_btn, "Create a timestamped backup of your Serato Database V2 file.\nRecommended before making any database changes.")
-        
-        restore_btn = ctk.CTkButton(
-            backup_row_frame,
-            text="🔓 Restore Database V2", 
-            command=self.restore_database,
-            height=32,
-            font=ctk.CTkFont(size=12)
-        )
-        restore_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        ToolTip(restore_btn, "Restore your Database V2 from a previous backup file.\nUse this to undo changes or recover from issues.")
-        
-        # Update Database row
-        update_row_frame = ctk.CTkFrame(db_buttons_frame, fg_color="transparent")
-        update_row_frame.pack(fill="x", pady=(4, 8))
-        
-        update_db_btn = ctk.CTkButton(
-            update_row_frame,
-            text="🎵 Update Database V2 (Add New Tracks)",
-            command=self.update_database,
-            height=32,
-            font=ctk.CTkFont(size=12, weight="bold"),
-            fg_color="#e74c3c",  # Red color for important operation
-            hover_color="#c0392b"
-        )
-        update_db_btn.pack(fill="x")
-        ToolTip(update_db_btn, "Add new tracks from your library to Serato's Database V2.\n⚠️ MODIFIES DATABASE V2 - Creates automatic backup first!\nClose Serato before using this operation.")
-        
-    def setup_status_section(self, parent):
-        """Setup the status/log section."""
-        
-        status_frame = ctk.CTkFrame(parent)
-        status_frame.pack(fill="both", expand=True)
-        
-        # Section title
-        status_title = ctk.CTkLabel(
-            status_frame, 
-            text="Operation Log", 
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        status_title.pack(pady=(15, 8))
-        
-        # Log text area
-        self.log_text = ctk.CTkTextbox(
-            status_frame,
-            height=180,
-            font=ctk.CTkFont(family="Consolas", size=10)
-        )
-        self.log_text.pack(fill="both", expand=True, padx=15, pady=(0, 15))
-        
-        # Clear log button
-        ctk.CTkButton(
-            status_frame,
-            text="Clear Log",
-            command=self.clear_log,
-            width=90,
-            height=28,
-            font=ctk.CTkFont(size=11)
-        ).pack(pady=(0, 15))
-        
-    def log_message(self, message: str, level: str = "INFO"):
-        """Add a message to the log."""
-        timestamp = time.strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] {level}: {message}\n"
-        
-        self.log_text.insert(tk.END, formatted_message)
-        self.log_text.see(tk.END)
-        
-        # Update the GUI
-        self.root.update_idletasks()
-        
-    def clear_log(self):
-        """Clear the log text area."""
-        self.log_text.delete("1.0", tk.END)
-        
-    def load_config(self):
-        """Load configuration from config.json file."""
-        try:
-            if os.path.exists(self.config_file_path):
-                with open(self.config_file_path, 'r') as f:
-                    self.config_data = json.load(f)
-                self.populate_fields()
-                self.log_message(f"Configuration loaded from {self.config_file_path}")
-            else:
-                self.log_message("No config file found, using defaults")
-        except Exception as e:
-            self.log_message(f"Error loading config: {str(e)}", "ERROR")
-            messagebox.showerror("Error", f"Failed to load configuration:\n{str(e)}")
-            
-    def populate_fields(self):
-        """Populate UI fields with loaded configuration."""
-        # Clear all fields first
-        self.library_root_entry.delete(0, tk.END)
-        self.serato_root_entry.delete(0, tk.END)
-        self.exts_entry.delete(0, tk.END)
-        
-        # Populate from config data with cross-platform path normalization
-        if 'library_root' in self.config_data:
-            # Normalize path for display while preserving cross-platform compatibility
-            path_value = str(Path(self.config_data['library_root']))
-            self.library_root_entry.insert(0, path_value)
-            
-        if 'serato_root' in self.config_data:
-            # Normalize path for display while preserving cross-platform compatibility  
-            path_value = str(Path(self.config_data['serato_root']))
-            self.serato_root_entry.insert(0, path_value)
-            
-        # Extensions with default fallback including .aac for CLI compatibility
-        if 'exts' in self.config_data:
-            self.exts_entry.insert(0, str(self.config_data['exts']))
-        else:
-            self.exts_entry.insert(0, ".mp3,.m4a,.aac,.flac,.wav")
-                
-    def save_config(self):
-        """Save current configuration to config.json file."""
-        try:
-            # Collect current values from UI and normalize paths for cross-platform compatibility
-            library_root = self.library_root_entry.get().strip()
-            serato_root = self.serato_root_entry.get().strip()
-            
-            # Use pathlib.Path for cross-platform compatibility, then convert to string
-            # This ensures consistent behavior on Windows, macOS, and Linux
-            if library_root:
-                library_root = str(Path(library_root))
-            if serato_root:
-                serato_root = str(Path(serato_root))
-            
-            # Auto-generate database path from serato_root using pathlib
-            db_path = ""
-            if serato_root:
-                db_path = str(Path(serato_root) / "database V2")
-                
-            # Get extensions
-            extensions = self.exts_entry.get().strip()
-            if not extensions:
-                extensions = ".mp3,.m4a,.aac,.flac,.wav"  # Default with .aac for compatibility
-            
-            # Create config in the same order as the original script format
-            self.config_data = {
-                'db': db_path,
-                'library_root': library_root,
-                'serato_root': serato_root,
-                'exts': extensions
-            }
-            
-            # Save to file
-            with open(self.config_file_path, 'w') as f:
-                json.dump(self.config_data, f, indent=2)
-                
-            self.log_message(f"Configuration saved to {self.config_file_path}")
-            messagebox.showinfo("Success", "Configuration saved successfully!")
-            
-        except Exception as e:
-            self.log_message(f"Error saving config: {str(e)}", "ERROR")
-            messagebox.showerror("Error", f"Failed to save configuration:\n{str(e)}")
-            
-    def validate_basic_config(self) -> bool:
-        """Validate basic configuration fields without database version checking."""
-        required_fields = {
-            'serato_root': self.serato_root_entry.get().strip()
-        }
-        
-        for field_name, field_value in required_fields.items():
-            if not field_value:
-                messagebox.showerror("Configuration Error", f"Please set the {field_name.replace('_', ' ').title()} field")
-                return False
-                
-            if not os.path.exists(field_value):
-                messagebox.showerror("Path Error", f"Path does not exist: {field_value}")
-                return False
-        
-        # Validate that Serato root contains the expected structure
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        if not os.path.exists(db_path):
-            messagebox.showerror("Serato Structure Error", 
-                               f"Could not find 'database V2' file in Serato directory:\n{serato_root}\n\n"
-                               f"Please ensure you selected the correct _Serato_ directory.")
-            return False
-                
-        return True
-            
-    def validate_config(self) -> bool:
-        """Validate that required configuration fields are set."""
-        required_fields = {
-            'library_root': self.library_root_entry.get().strip(), 
-            'serato_root': self.serato_root_entry.get().strip()
-        }
-        
-        for field_name, field_value in required_fields.items():
-            if not field_value:
-                messagebox.showerror("Configuration Error", f"Please set the {field_name.replace('_', ' ').title()} field")
-                return False
-                
-            if not os.path.exists(field_value):
-                messagebox.showerror("Path Error", f"Path does not exist: {field_value}")
-                return False
-        
-        # Validate that Serato root contains the expected structure
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        if not os.path.exists(db_path):
-            messagebox.showerror("Serato Structure Error", 
-                               f"Could not find 'database V2' file in Serato directory:\n{serato_root}\n\n"
-                               f"Please ensure you selected the correct _Serato_ directory.")
-            return False
-        
-        # CRITICAL: Check database version compatibility
-        is_v2, version_info = detect_database_version(db_path)
-        if not is_v2:
-            messagebox.showerror("⚠️ INCOMPATIBLE DATABASE VERSION ⚠️", 
-                               f"DANGER: {version_info}\n\n"
-                               f"🚫 This application is ONLY compatible with Serato V2 databases!\n\n"
-                               f"Using this tool with legacy Serato databases will cause:\n"
-                               f"• Complete database corruption\n"
-                               f"• Loss of all your tracks and playlists\n"
-                               f"• Irreversible damage to your Serato library\n\n"
-                               f"⚠️ DO NOT PROCEED unless you are using Serato V2 (new beta)!\n\n"
-                               f"Database: {db_path}\n"
-                               f"Status: {version_info}")
-            return False
-        
-        # Show confirmation for V2 databases
-        self.log_message(f"✅ Database version check passed: {version_info}")
-                
-        return True
-        
-    def run_seratosync_command(self, args: list, description: str):
-        """Run seratosync command in a separate thread."""
-        def run_command():
+        self.dialog.open()
+    
+    def check_database_version(self):
+        """Check Serato database version compatibility."""
+        def run_check():
             try:
-                self.log_message(f"Starting: {description}")
-                self.log_message("-" * 50)
+                # Import seratosync modules
+                from seratosync.database import read_database_v2_pfil_set
                 
-                # Save current config before running
-                self.save_config()
+                serato_path = self.serato_db_entry.text.strip()
+                if not serato_path:
+                    self.db_version_result = "No Serato database path specified"
+                    Clock.schedule_once(lambda dt: self.show_version_result(), 0)
+                    return
                 
-                # Build command with config file
-                config_path = os.path.abspath(self.config_file_path)
-                cmd = [sys.executable, "-m", "seratosync", "--config", config_path] + args
+                # Look for Database V2 file
+                db_file = Path(serato_path) / "database V2"
+                if not db_file.exists():
+                    self.db_version_result = f"Database V2 file not found at: {db_file}"
+                    Clock.schedule_once(lambda dt: self.show_version_result(), 0)
+                    return
                 
-                self.log_message(f"Running: {' '.join(cmd)}")
-                self.log_message("-" * 50)
+                # Try to read database to verify compatibility
+                pfil_set, inferred_prefix, total_tracks = read_database_v2_pfil_set(db_file, 10)
                 
-                # Run command
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    cwd=os.path.dirname(os.path.abspath(__file__))
-                )
+                # Use the user-specified library path instead of inferred prefix
+                crates_path = self.crates_path_entry.text.strip()
+                actual_prefix = crates_path if crates_path else "Not specified"
                 
-                # Log output
-                if result.stdout:
-                    self.log_message("STDOUT:")
-                    for line in result.stdout.strip().split('\n'):
-                        if line.strip():
-                            self.log_message(f"  {line.strip()}")
-                        else:
-                            self.log_message("")  # Preserve empty lines
-                            
-                if result.stderr:
-                    self.log_message("STDERR:")
-                    for line in result.stderr.strip().split('\n'):
-                        if line.strip():
-                            self.log_message(f"  {line.strip()}", "ERROR")
+                self.db_version_result = f"Database appears compatible! Found {total_tracks} tracks. Library path: {actual_prefix}"
+                Clock.schedule_once(lambda dt: self.show_version_result(), 0)
                 
-                self.log_message("-" * 50)
-                if result.returncode == 0:
-                    self.log_message(f"✅ {description} completed successfully")
+            except Exception as e:
+                self.db_version_result = f"Error checking database: {str(e)}"
+                Clock.schedule_once(lambda dt: self.show_version_result(), 0)
+        
+        # Run check in background thread
+        thread = threading.Thread(target=run_check, daemon=True)
+        thread.start()
+        self.log_message("Checking database version compatibility...")
+    
+    def show_version_result(self):
+        """Show database version check result."""
+        if not self.db_version_result:
+            return
+        
+        # Determine if version is supported
+        is_warning = "not supported" in self.db_version_result.lower() or "error" in self.db_version_result.lower()
+        
+        def close_version_dialog(instance):
+            self.version_dialog.dismiss()
+        
+        self.version_dialog = MDDialog(
+            MDDialogHeadlineText(text="Database Version Check"),
+            MDDialogSupportingText(text=self.db_version_result),
+            MDDialogButtonContainer(
+                MDButton(
+                    MDButtonText(text="OK"),
+                    style="filled",
+                    on_release=close_version_dialog
+                ),
+            ),
+        )
+        self.version_dialog.open()
+        self.log_message(f"Database version check: {self.db_version_result}")
+    
+    def sync_library(self):
+        """Sync library to crates."""
+        def run_sync():
+            try:
+                self.log_message("Starting library sync operation...")
+                
+                # Import required modules
+                from seratosync.cli import main as seratosync_main
+                import io
+                import contextlib
+                
+                serato_path = self.serato_db_entry.text.strip()
+                crates_path = self.crates_path_entry.text.strip()
+                
+                if not serato_path or not os.path.exists(serato_path):
+                    Clock.schedule_once(lambda dt: toast("Invalid Serato database path"), 0)
+                    return
+                
+                if not crates_path or not os.path.exists(crates_path):
+                    Clock.schedule_once(lambda dt: toast("Invalid music library directory path"), 0)
+                    return
+                
+                # Build arguments for CLI
+                db_file = Path(serato_path) / "database V2"
+                subcrates_dir = Path(serato_path) / "Subcrates"
+                
+                args = [
+                    "--db", str(db_file),
+                    "--library-root", crates_path,
+                    "--serato-root", str(serato_path),
+                    "--update-db"  # GUI always updates database
+                ]
+                
+                # Capture stdout to get detailed output
+                captured_output = io.StringIO()
+                
+                with contextlib.redirect_stdout(captured_output):
+                    result = seratosync_main(args)
+                
+                # Get the captured output and display it line by line
+                output_lines = captured_output.getvalue().strip().split('\n')
+                for line in output_lines:
+                    if line.strip():  # Skip empty lines
+                        Clock.schedule_once(lambda dt, msg=line: self.log_message(msg), 0)
+                        # Small delay to allow GUI to update
+                        import time
+                        time.sleep(0.05)
+                
+                if result == 0:
+                    Clock.schedule_once(lambda dt: self.log_message("Sync completed successfully!"), 0)
+                    Clock.schedule_once(lambda dt: toast("Library sync completed successfully!"), 0)
                 else:
-                    self.log_message(f"❌ {description} failed with exit code {result.returncode}", "ERROR")
-                    if not result.stdout and not result.stderr:
-                        self.log_message("No output captured. The command may have run silently or failed to start.", "ERROR")
-                    
-            except Exception as e:
-                self.log_message(f"❌ Error running {description}: {str(e)}", "ERROR")
+                    Clock.schedule_once(lambda dt: self.log_message(f"Sync completed with warnings (exit code: {result})"), 0)
+                    Clock.schedule_once(lambda dt: toast("Sync completed with warnings"), 0)
                 
-        # Run in thread to prevent UI freezing
-        threading.Thread(target=run_command, daemon=True).start()
+            except Exception as e:
+                error_msg = f"Sync operation failed: {str(e)}"
+                Clock.schedule_once(lambda dt: self.log_message(error_msg), 0)
+                Clock.schedule_once(lambda dt: toast("Sync operation failed"), 0)
         
-    def backup_database(self):
-        """Create a backup of the Database V2 file."""
-        if not self.validate_basic_config():
-            return
-        
-        # Auto-detect database path from Serato root
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        
-        # Create timestamp with current local time
-        now = datetime.datetime.now()
-        timestamp = now.strftime("%Y%m%d_%H%M%S")
-        backup_path = f"{db_path}.backup_{timestamp}"
-        
-        try:
-            self.log_message(f"Creating backup at {now.strftime('%Y-%m-%d %I:%M:%S %p')}...")
-            shutil.copy2(db_path, backup_path)
-            self.log_message(f"✅ Database backed up to: {backup_path}")
-            messagebox.showinfo("Backup Complete", f"Database backed up to:\n{backup_path}\n\nCreated: {now.strftime('%Y-%m-%d %I:%M:%S %p')}")
-        except Exception as e:
-            self.log_message(f"❌ Backup failed: {str(e)}", "ERROR")
-            messagebox.showerror("Backup Failed", f"Failed to backup database:\n{str(e)}")
-            
-    def restore_database(self):
-        """Restore Database V2 from a backup file."""
-        backup_path = filedialog.askopenfilename(
-            title="Select Database V2 Backup File",
-            filetypes=[("All files", "*.*"), ("Backup files", "*.backup_*")]
-        )
-        
-        if not backup_path:
-            return
-            
-        if not self.validate_basic_config():
-            return
-        
-        # Auto-detect database path from Serato root
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        
-        if messagebox.askyesno("Restore Database", 
-                              f"This will replace your current Database V2 with the backup.\n\n"
-                              f"Current: {db_path}\n"
-                              f"Backup: {backup_path}\n\n"
-                              f"Are you sure you want to continue?"):
+        # Run sync in background thread
+        thread = threading.Thread(target=run_sync, daemon=True)
+        thread.start()
+    
+    def generate_report(self):
+        """Generate database report."""
+        def run_report():
             try:
-                shutil.copy2(backup_path, db_path)
-                self.log_message(f"✅ Database restored from: {backup_path}")
-                messagebox.showinfo("Restore Complete", "Database restored successfully!")
+                self.log_message("Generating database report...")
+                
+                # Import seratosync modules
+                from seratosync.database import read_database_v2_pfil_set
+                from seratosync.library import scan_library, get_library_stats
+                
+                serato_path = self.serato_db_entry.text.strip()
+                crates_path = self.crates_path_entry.text.strip()
+                
+                if not serato_path or not os.path.exists(serato_path):
+                    Clock.schedule_once(lambda dt: toast("Invalid Serato database path"), 0)
+                    return
+                
+                # Generate database statistics
+                db_file = Path(serato_path) / "database V2"
+                if db_file.exists():
+                    pfil_set, inferred_prefix, total_tracks = read_database_v2_pfil_set(db_file)
+                    
+                    # Use the library path as the actual prefix (what the user specified)
+                    actual_prefix = crates_path if crates_path else "Not specified"
+                    
+                    report_lines = [
+                        f"Database Report for: {serato_path}",
+                        f"=" * 50,
+                        f"Total tracks in database: {total_tracks}",
+                        f"Library prefix (user specified): {actual_prefix}",
+                        f"Database inferred prefix: {inferred_prefix or 'None'}",
+                        f"Unique file paths: {len(pfil_set)}",
+                    ]
+                    
+                    # Add library stats if path is specified
+                    if crates_path and os.path.exists(crates_path):
+                        library_map = scan_library(Path(crates_path))
+                        dirs, files = get_library_stats(library_map)
+                        report_lines.extend([
+                            f"",
+                            f"Music Library Directory: {crates_path}",
+                            f"Audio directories: {dirs}",
+                            f"Audio files found: {files}",
+                        ])
+                    
+                    report = "\n".join(report_lines)
+                else:
+                    report = f"Database V2 file not found at: {db_file}"
+                
+                Clock.schedule_once(lambda dt: self.log_message(f"Report generated:\n{report}"), 0)
+                Clock.schedule_once(lambda dt: toast("Database report generated successfully!"), 0)
+                
             except Exception as e:
-                self.log_message(f"❌ Restore failed: {str(e)}", "ERROR")
-                messagebox.showerror("Restore Failed", f"Failed to restore database:\n{str(e)}")
-                
-    def validate_basic_config(self) -> bool:
-        """Basic validation without database version checking (for dry run)."""
-        required_fields = {
-            'library_root': self.library_root_entry.get().strip(), 
-            'serato_root': self.serato_root_entry.get().strip()
-        }
+                error_msg = f"Report generation failed: {str(e)}"
+                Clock.schedule_once(lambda dt: self.log_message(error_msg), 0)
+                Clock.schedule_once(lambda dt: toast("Report generation failed"), 0)
         
-        for field_name, field_value in required_fields.items():
-            if not field_value:
-                messagebox.showerror("Configuration Error", f"Please set the {field_name.replace('_', ' ').title()} field")
-                return False
-                
-            if not os.path.exists(field_value):
-                messagebox.showerror("Path Error", f"Path does not exist: {field_value}")
-                return False
-        
-        # Basic check for Serato directory structure (no version validation)
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        if not os.path.exists(db_path):
-            messagebox.showerror("Serato Structure Error", 
-                               f"Could not find 'database V2' file in Serato directory:\n{serato_root}\n\n"
-                               f"Please ensure you selected the correct _Serato_ directory.")
-            return False
-                
-        return True
-
-    def run_dry_run(self):
-        """Run seratosync in dry-run mode to preview changes."""
-        if not self.validate_basic_config():
-            return
-        
-        # Clear the log to show fresh output
-        self.log_text.delete("1.0", tk.END)
-        self.log_message("Starting dry run preview...")
-        
-        # Run dry run command
-        self.run_seratosync_command(["--dry-run"], "Dry run preview")
-        
-    def update_database(self):
-        """Update Database V2 with new tracks."""
-        if not self.validate_config():
-            return
-        
-        # Double-check database version before any modifications
-        serato_root = self.serato_root_entry.get().strip()
-        db_path = os.path.join(serato_root, "database V2")
-        is_v2, version_info = detect_database_version(db_path)
-        
-        if not is_v2:
-            messagebox.showerror("🚫 DATABASE MODIFICATION BLOCKED 🚫", 
-                               f"CRITICAL SAFETY CHECK FAILED!\n\n"
-                               f"Database: {version_info}\n\n"
-                               f"🛑 This operation has been BLOCKED to prevent data corruption.\n\n"
-                               f"This application can ONLY modify Serato V2 databases.\n"
-                               f"Attempting to modify legacy databases will result in:\n"
-                               f"• Complete loss of your music library\n"
-                               f"• Irreversible corruption of all playlists\n"
-                               f"• Total destruction of Serato data\n\n"
-                               f"Please ensure you are using Serato V2 (new beta) before proceeding.")
-            return
+        # Run report generation in background thread
+        thread = threading.Thread(target=run_report, daemon=True)
+        thread.start()
+    
+    def clean_database(self):
+        """Clean database by removing duplicates and corrupted entries."""
+        def show_cleanup_confirmation():
+            def perform_cleanup(instance):
+                self.cleanup_dialog.dismiss()
+                self.run_database_cleanup()
             
-        # Final confirmation with extra warnings
-        if messagebox.askyesno("⚠️ FINAL WARNING: Modify Database V2 ⚠️", 
-                              f"🔥 LAST CHANCE TO CANCEL 🔥\n\n"
-                              f"Database verified as: {version_info}\n\n"
-                              f"This operation will PERMANENTLY modify your database:\n"
-                              f"• Create automatic backup first\n"
-                              f"• Add new tracks found in your library\n"
-                              f"• Update relevant crates\n\n"
-                              f"⚠️ REQUIREMENTS:\n"
-                              f"• Serato MUST be completely closed\n"
-                              f"• You have confirmed this is Serato V2\n"
-                              f"• You understand this modifies your database\n\n"
-                              f"Proceed with database modification?"):
-            self.run_seratosync_command(["--update-db"], "Update Database V2")
+            def cancel_cleanup(instance):
+                self.cleanup_dialog.dismiss()
             
-    def run(self):
-        """Start the GUI application."""
-        self.log_message("Serato Sync GUI started")
-        self.log_message("Load your configuration and select an operation")
-        self.root.mainloop()
+            self.cleanup_dialog = MDDialog(
+                MDDialogHeadlineText(text="Database Cleanup Warning"),
+                MDDialogSupportingText(
+                    text=(
+                        "This will clean your Serato database by:\n"
+                        "• Removing duplicate tracks\n"
+                        "• Removing corrupted entries\n"
+                        "• Removing tracks without metadata\n\n"
+                        "A backup will be created automatically.\n\n"
+                        "This operation cannot be undone easily. Continue?"
+                    )
+                ),
+                MDDialogButtonContainer(
+                    MDButton(
+                        MDButtonText(text="CANCEL"),
+                        style="outlined",
+                        on_release=cancel_cleanup
+                    ),
+                    MDButton(
+                        MDButtonText(text="CLEAN DATABASE"),
+                        style="filled",
+                        on_release=perform_cleanup
+                    ),
+                ),
+            )
+            self.cleanup_dialog.open()
+        
+        # Show confirmation dialog
+        show_cleanup_confirmation()
+    
+    def run_database_cleanup(self):
+        """Execute database cleanup in background thread."""
+        def run_cleanup():
+            try:
+                # Import required modules first
+                from seratosync.database import read_database_v2_records, write_database_v2_records
+                import sys
+                from pathlib import Path
+                
+                self.log_message("Starting database cleanup operation...")
+                
+                serato_path = self.serato_db_entry.text.strip()
+                if not serato_path or not os.path.exists(serato_path):
+                    Clock.schedule_once(lambda dt: toast("Invalid Serato database path"), 0)
+                    return
+                
+                db_file = Path(serato_path) / "database V2"
+                if not db_file.exists():
+                    Clock.schedule_once(lambda dt: toast("Database V2 file not found"), 0)
+                    return
+                
+                # Add scripts/debug to path and import database_cleanup
+                debug_path = Path(__file__).parent / "scripts" / "debug"
+                sys.path.insert(0, str(debug_path))
+                try:
+                    import database_cleanup
+                finally:
+                    sys.path.remove(str(debug_path))
+                
+                # Read current database
+                Clock.schedule_once(lambda dt: self.log_message("Reading database records..."), 0)
+                records = read_database_v2_records(db_file)
+                
+                # Analyze before cleanup
+                Clock.schedule_once(lambda dt: self.log_message("Analyzing database for issues..."), 0)
+                analysis = database_cleanup.analyze_database_issues(records)
+                
+                analysis_msg = (
+                    f"Database analysis:\n"
+                    f"  Total records: {analysis['total_records']}\n"
+                    f"  Without file path: {analysis['records_without_path']}\n"
+                    f"  Without metadata: {analysis['records_without_metadata']}\n"
+                    f"  Potential duplicates: {analysis['potential_duplicates']}\n"
+                    f"  Corrupted paths: {analysis['corrupted_paths']}"
+                )
+                Clock.schedule_once(lambda dt: self.log_message(analysis_msg), 0)
+                
+                # Create backup
+                Clock.schedule_once(lambda dt: self.log_message("Creating database backup..."), 0)
+                backup_path = database_cleanup.backup_database(db_file)
+                Clock.schedule_once(lambda dt: self.log_message(f"Backup saved: {backup_path.name}"), 0)
+                
+                # Clean records
+                Clock.schedule_once(lambda dt: self.log_message("Cleaning database records..."), 0)
+                cleaned_records, stats = database_cleanup.clean_database_records(
+                    records,
+                    remove_duplicates=True,
+                    require_metadata=True
+                )
+                
+                # Write cleaned database
+                Clock.schedule_once(lambda dt: self.log_message("Writing cleaned database..."), 0)
+                write_database_v2_records(db_file, cleaned_records)
+                
+                # Report results
+                results_msg = (
+                    f"Database cleanup completed!\n"
+                    f"  Original records: {stats['original_count']}\n"
+                    f"  Removed (no path): {stats['removed_no_path']}\n"
+                    f"  Removed (no metadata): {stats['removed_no_metadata']}\n"
+                    f"  Removed (duplicates): {stats['removed_duplicates']}\n"
+                    f"  Removed (corrupted): {stats['removed_corrupted']}\n"
+                    f"  Final records: {stats['final_count']}\n"
+                    f"  Records saved: {stats['final_count'] - stats['original_count']}"
+                )
+                Clock.schedule_once(lambda dt: self.log_message(results_msg), 0)
+                Clock.schedule_once(lambda dt: toast(f"Database cleaned! {stats['final_count']} tracks remaining"), 0)
+                
+            except Exception as e:
+                error_msg = f"Database cleanup failed: {str(e)}"
+                Clock.schedule_once(lambda dt: self.log_message(error_msg), 0)
+                Clock.schedule_once(lambda dt: toast("Database cleanup failed"), 0)
+        
+        # Run cleanup in background thread
+        thread = threading.Thread(target=run_cleanup, daemon=True)
+        thread.start()
+    
+    def update_text_height(self, instance, size):
+        """Update the height of the text label based on texture size."""
+        instance.height = size[1]
+        
+        # Auto-scroll to bottom when text is updated
+        if hasattr(self, 'scroll_view') and self.scroll_view:
+            Clock.schedule_once(lambda dt: self.scroll_to_bottom(), 0.1)
+    
+    def scroll_to_bottom(self):
+        """Scroll the console to the bottom."""
+        if self.scroll_view and self.status_text:
+            self.scroll_view.scroll_y = 0  # 0 = bottom, 1 = top
+    
+    def log_message(self, message):
+        """Add message to status log."""
+        if not self.status_text:
+            return
+        
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_message = f"[{timestamp}] {message}"
+        
+        # Update status text
+        current_text = self.status_text.text
+        if current_text == "Serato Sync GUI initialized.\nReady for operations...":
+            self.status_text.text = formatted_message
+        else:
+            self.status_text.text = current_text + "\n" + formatted_message
+        
+        # Adjust text size for wrapping
+        if hasattr(self, 'scroll_view') and self.scroll_view:
+            # Get the scroll view width and set text_size for proper wrapping
+            Clock.schedule_once(lambda dt: self.update_text_wrapping(), 0.05)
+        
+        Logger.info(f"SeratoSync: {message}")
+    
+    def update_text_wrapping(self):
+        """Update text wrapping based on scroll view width."""
+        if self.scroll_view and self.status_text:
+            scroll_width = self.scroll_view.width - dp(30)  # Account for padding and scrollbar
+            self.status_text.text_size = (scroll_width, None)
+    
+    def load_config(self):
+        """Load configuration from file."""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    self.config = json.load(f)
+                
+                # Update UI fields
+                if 'serato_db_path' in self.config:
+                    self.serato_db_entry.text = self.config['serato_db_path']
+                if 'music_library_path' in self.config:
+                    self.crates_path_entry.text = self.config['music_library_path']
+                elif 'crates_path' in self.config:  # Backward compatibility
+                    self.crates_path_entry.text = self.config['crates_path']
+                
+                self.log_message("Configuration loaded successfully!")
+            else:
+                self.log_message("No existing configuration found. Using defaults.")
+                
+        except Exception as e:
+            self.log_message(f"Error loading configuration: {e}")
+    
+    def save_config(self):
+        """Save current configuration to file."""
+        try:
+            self.config.update({
+                'serato_db_path': self.serato_db_entry.text.strip(),
+                'music_library_path': self.crates_path_entry.text.strip(),
+            })
+            
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            
+            self.log_message("Configuration saved successfully!")
+            
+        except Exception as e:
+            self.log_message(f"Error saving configuration: {e}")
+    
+    def on_stop(self):
+        """Called when the app is closing."""
+        # Save configuration on exit
+        if hasattr(self, 'serato_db_entry') and hasattr(self, 'crates_path_entry'):
+            self.save_config()
 
 
 def main():
-    """Main entry point for the GUI application."""
-    app = SeratoSyncGUI()
-    app.run()
+    """Main entry point."""
+    try:
+        app = SeratoSyncGUI()
+        app.run()
+    except Exception as e:
+        print(f"Failed to start application: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

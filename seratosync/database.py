@@ -72,7 +72,8 @@ def read_database_v2_pfil_set(db_path: Path, sample_for_prefix: int = 500) -> Tu
         for path in path_samples:
             parts = path.split('/')
             # Try prefixes of length 1, 2, 3, etc. (but not the full path)
-            for prefix_len in range(1, min(len(parts), 4)):  # Max 3 levels deep
+            # Allow deeper prefixes for better inference (up to 6 levels)
+            for prefix_len in range(1, min(len(parts), 7)):  # Max 6 levels deep
                 prefix = '/'.join(parts[:prefix_len])
                 prefix_counts[prefix] += 1
         
@@ -83,8 +84,9 @@ def read_database_v2_pfil_set(db_path: Path, sample_for_prefix: int = 500) -> Tu
                              if count >= min_frequency]
             
             if common_prefixes:
-                # Choose the longest common prefix
-                inferred = max(common_prefixes, key=lambda x: (len(x[0].split('/')), x[1]))[0]
+                # Choose the longest common prefix that represents the actual library root
+                # Sort by frequency first, then by length to get best match
+                inferred = max(common_prefixes, key=lambda x: (x[1], len(x[0].split('/'))))[0]
 
     return pfil_set, inferred, total
 
@@ -103,10 +105,31 @@ def normalize_prefix(prefix: Optional[str], inferred_from_db: Optional[str], lib
     """
     if prefix:
         return prefix.strip("/")
+    
+    # If we have an inferred prefix, check if it makes sense for the library_root
     if inferred_from_db:
+        # Convert library_root to the same format as database paths
+        # e.g., /Users/dvize/Music/Music Tracks -> Users/dvize/Music/Music Tracks
+        lib_path_parts = library_root.parts
+        if lib_path_parts[0] == '/':
+            lib_path_parts = lib_path_parts[1:]  # Remove leading slash
+        
+        expected_prefix = '/'.join(lib_path_parts)
+        
+        # If the database contains paths that match our library structure, use that
+        # This handles cases where inferred_from_db is "Users/dvize/Music/MusicUnsorted"
+        # but library_root is "/Users/dvize/Music/Music Tracks"
+        if library_root.name in ["Music Tracks", "Music", "Library"] and "Music" in expected_prefix:
+            return expected_prefix.strip("/")
+        
+        # Otherwise use the inferred prefix
         return inferred_from_db.strip("/")
-    # fallback to library root last component
-    return library_root.name.strip("/")
+    
+    # fallback to library root path structure
+    lib_path_parts = library_root.parts
+    if lib_path_parts[0] == '/':
+        lib_path_parts = lib_path_parts[1:]  # Remove leading slash
+    return '/'.join(lib_path_parts).strip("/")
 
 def read_database_v2_records(db_path: Path) -> List[dict]:
     """

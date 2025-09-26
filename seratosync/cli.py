@@ -98,8 +98,56 @@ def validate_paths(args) -> bool:
 def write_crate_files(crate_plans: List[tuple[Path, List[str]]], dry_run: bool, affected_tracks: set = None) -> int:
     """Write crate files based on the given plans, optionally limiting to crates with affected tracks."""
     if dry_run:
-        print("[DRY RUN] No crate files written.")
-        return 0
+        # Calculate what would be written for dry run reporting
+        would_write = 0
+        new_crates = 0
+        updated_crates = 0
+        skipped_crates = 0
+        
+        for crate_file, ptrks in crate_plans:
+            if not ptrks:
+                continue
+            
+            # If affected_tracks is provided, only count crates that contain affected tracks
+            if affected_tracks is not None:
+                has_affected_track = any(track in affected_tracks for track in ptrks)
+                if not has_affected_track:
+                    skipped_crates += 1
+                    continue  # Skip this crate - no affected tracks
+            
+            # Check if crate exists and if it would actually change
+            existing_count = 0
+            would_change = True
+            
+            if crate_file.exists():
+                from .crates import read_crate_file
+                existing_tracks = read_crate_file(crate_file)
+                existing_count = len(existing_tracks)
+                
+                # Check if content would actually change
+                new_bytes = build_crate_payload(ptrks)
+                with open(crate_file, "rb") as f:
+                    old_bytes = f.read()
+                would_change = old_bytes != new_bytes
+            
+            if would_change:
+                would_write += 1
+                if existing_count == 0:
+                    new_crates += 1
+                else:
+                    updated_crates += 1
+            else:
+                skipped_crates += 1
+        
+        print(f"[DRY RUN] Would write {would_write} crate files:")
+        if new_crates > 0:
+            print(f"  - {new_crates} new crates")
+        if updated_crates > 0:
+            print(f"  - {updated_crates} updated crates")
+        if skipped_crates > 0:
+            print(f"  - {skipped_crates} crates skipped (no changes needed)")
+        
+        return would_write
     
     written = 0
     for crate_file, ptrks in crate_plans:
@@ -383,16 +431,43 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Parse Database V2 for existing pfil paths and infer prefix
     pfil_set_raw, inferred, total = read_database_v2_pfil_set(merged_args_obj.db)
     prefix = normalize_prefix(merged_args_obj.prefix, inferred, merged_args_obj.library_root)
-    print(f"[INFO] Database tracks: {total:,}; inferred prefix: '{prefix}'")
+    
+    # TEMPORARY FIX: Force correct prefix for Music Tracks library
+    # Check if we have a common case where library_root ends with "Music Tracks"
+    if merged_args_obj.library_root.name == "Music Tracks" and prefix.endswith("Music"):
+        # Convert library root path to match database format
+        lib_parts = merged_args_obj.library_root.parts
+        if lib_parts[0] == '/':
+            lib_parts = lib_parts[1:]  # Remove leading slash
+        forced_prefix = '/'.join(lib_parts)
+        print(f"[INFO] Database tracks: {total:,}; inferred prefix: '{prefix}' -> forced to: '{forced_prefix}'")
+        prefix = forced_prefix
+    else:
+        print(f"[INFO] Database tracks: {total:,}; inferred prefix: '{prefix}'")
 
+    total = len(pfil_set_raw)
+    print(f"[INFO] Processing {total} tracks from database")
+    
     # Normalize the database paths to match the format of scanned paths
+    # AND filter to only include tracks within the specified library_root
     pfil_set_normalized = set()
+    library_root_str = str(merged_args_obj.library_root).replace("\\", "/")
+    
+    # Remove leading slash from library root for comparison with database paths
+    library_root_normalized = library_root_str.lstrip("/")
+    
     for p_raw in pfil_set_raw:
         p_norm = p_raw.replace("\\", "/")
-        if f"{prefix}/" in p_norm:
-            # Strip everything before the prefix to align paths
-            p_norm = f"{prefix}/" + p_norm.split(f"{prefix}/", 1)[1]
-        pfil_set_normalized.add(p_norm)
+        
+        # Only process tracks that are within the specified library root
+        # Database paths typically don't have leading slash
+        if library_root_normalized in p_norm:
+            if f"{prefix}/" in p_norm:
+                # Strip everything before the prefix to align paths
+                p_norm = f"{prefix}/" + p_norm.split(f"{prefix}/", 1)[1]
+            pfil_set_normalized.add(p_norm)
+    
+    print(f"[INFO] Database tracks: {total:,}; filtered to {len(pfil_set_normalized)} tracks within library root")
 
     # Scan library
     lib_map = scan_library(merged_args_obj.library_root, allowed_exts)
@@ -434,6 +509,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         success, affected_tracks = update_database_v2(merged_args_obj.db, all_track_paths, new_tracks, merged_args_obj.library_root)
         if not success:
             return 4
+    
+    # If we're not updating the DB but have new tracks, we still need to limit crate writes
+    # to only those crates that contain new tracks
+    if affected_tracks is None and new_tracks:
+        # Use the new tracks as affected tracks to limit crate writes
+        affected_tracks = set(new_tracks)
 
     # Write crate files, limiting to only those with affected tracks
     # Pass affected tracks to only update crates that actually changed
