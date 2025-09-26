@@ -2,7 +2,7 @@
 
 A modern desktop application that automatically syncs your music library folders to Serato crates and manages your Serato database.
 
-![SeratoSync GUI](https://img.shields.io/badge/GUI-Kivy%2FKivyMD-blue) ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green) ![Python](https://img.shields.io/badge/Python-3.8%2B-yellow)
+![SeratoSync GUI](https://img.shields.io/badge/GUI-Kivy%2FKivyMD-blue) ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-green) ![Python](https://img.shields.io/badge/Python-3.8%2B-yellow)
 
 ## 🎯 Quick Start
 
@@ -11,8 +11,7 @@ A modern desktop application that automatically syncs your music library folders
 **For most users, download the ready-to-use applications:**
 
 - **Windows**: Download `SeratoSync_GUI.exe` from releases
-- **macOS**: Download `SeratoSync GUI.app` from releases  
-- **Linux**: Download the Linux build from releases
+- **macOS**: Download `SeratoSync GUI.app` from releases
 
 ### First Time Setup
 
@@ -55,7 +54,6 @@ A modern desktop application that automatically syncs your music library folders
 
 - **Windows**: Download `SeratoSync_GUI.exe` 
 - **macOS**: Download `SeratoSync GUI.app`
-- **Linux**: Download the Linux AppImage
 
 ### Option 2: Build from Source
 
@@ -109,7 +107,6 @@ python seratosync_gui.py
 1. **Launch SeratoSync GUI**
    - Windows: Double-click `SeratoSync_GUI.exe`
    - macOS: Double-click `SeratoSync GUI.app`
-   - Linux: Run the downloaded AppImage
 
 2. **Configure Paths** (first time only)
    - Click 📁 next to **Serato Root** and select your `_Serato_` folder
@@ -171,7 +168,6 @@ For CLI usage or advanced customization, you can create a `config.json` file:
 - **Portable**: `config.json` in the application directory (recommended)
 - **Windows**: `%APPDATA%\seratosync\config.json`
 - **macOS**: `~/Library/Application Support/seratosync/config.json`
-- **Linux**: `~/.config/seratosync/config.json`
 
 ## 📂 Typical Path Examples
 
@@ -185,10 +181,7 @@ For CLI usage or advanced customization, you can create a `config.json` file:
 - **Serato Root**: `%USERPROFILE%\Music\_Serato_`
 - **Library Root**: `%USERPROFILE%\Music` or `%USERPROFILE%\Music\Music Tracks`
 
-### Linux  
-- **Database V2**: `~/Music/_Serato_/Database V2`
-- **Serato Root**: `~/Music/_Serato_`
-- **Library Root**: `~/Music`
+
 
 ## 🎛️ Advanced Options
 
@@ -264,14 +257,14 @@ When "Update Database V2" is enabled:
 
 ### Supported Formats
 **Audio Files**: MP3, M4A, AAC, FLAC, WAV, AIFF, AIF, OGG
-**Platforms**: Windows 10/11, macOS 10.14+, Ubuntu 18.04+
+**Platforms**: Windows 10/11, macOS 10.14+
 **Serato Versions**: Serato DJ Pro/Lite with Database V2 format
 
 ## 🆕 Recent Improvements
 
 - ✅ **Modern GUI**: Replaced command-line with intuitive graphical interface
 - ✅ **Performance**: 10x faster crate updates with selective modification detection
-- ✅ **Cross-platform**: Native applications for Windows, macOS, and Linux
+- ✅ **Cross-platform**: Native applications for Windows and macOS
 - ✅ **Path normalization**: Fixed issues with different path formats
 - ✅ **Error handling**: User-friendly error messages and recovery suggestions
 - ✅ **Auto-configuration**: Persistent settings and automatic path detection
