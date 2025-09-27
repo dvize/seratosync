@@ -1,7 +1,0 @@
-# Requirements for building standalone executable
-pyinstaller>=5.0
-customtkinter>=5.0.0
-pillow>=9.0.0
-
-# Core dependencies (usually included with Python)
-pathlib2; python_version<"3.4"

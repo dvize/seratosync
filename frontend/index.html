@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Serato Sync</title>
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+<div class="container">
+    <div class="card">
+        <h3>Configuration</h3>
+        <div class="form-group">
+            <label for="serato-db-path">Serato Database Path</label>
+            <div class="input-group">
+                <input type="text" id="serato-db-path" class="form-control">
+                <button id="browse-serato-db">Browse</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="music-library-path">Music Library Path</label>
+            <div class="input-group">
+                <input type="text" id="music-library-path" class="form-control">
+                <button id="browse-music-library">Browse</button>
+            </div>
+        </div>
+        <button id="save-config">Save Configuration</button>
+    </div>
+
+    <div class="card">
+        <h3>Operations</h3>
+        <div class="button-group">
+            <button id="sync-library">Sync Library</button>
+            <button id="generate-report">Generate Report</button>
+            <button id="clean-database">Clean Database</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Logs</h3>
+        <div id="logs" class="logs"></div>
+    </div>
+</div>
+
+<script src="./src/main.js" type="module"></script>
+</body>
+</html>
