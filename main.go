@@ -17,7 +17,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "seratosync-go",
+		Title:  "Serato Sync",
 		Width:  800,
 		Height: 650,
 		AssetServer: &assetserver.Options{
